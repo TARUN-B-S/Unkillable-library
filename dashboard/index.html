@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Traffic Retention Monitor</title>
+    <style>
+      :root { color-scheme: dark; font-family: Georgia, serif; background: #11130f; color: #f5f0e4; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; padding: clamp(18px, 4vw, 56px); background: radial-gradient(circle at 85% 0, #39411b 0, transparent 34%), #11130f; }
+      header { max-width: 1400px; margin: 0 auto 28px; display: flex; justify-content: space-between; gap: 16px; align-items: end; flex-wrap: wrap; }
+      h1 { margin: 0; font-size: clamp(28px, 5vw, 56px); font-weight: 500; letter-spacing: -.04em; }
+      header p { margin: 0; color: #bbc09d; font-family: ui-monospace, monospace; font-size: 12px; }
+      main { max-width: 1400px; margin: auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+      section { overflow: hidden; border: 1px solid #414630; background: #1a1d17; box-shadow: 0 18px 50px #0006; }
+      .label { display: flex; justify-content: space-between; padding: 12px 14px; font-family: ui-monospace, monospace; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; background: #252a1d; align-items: center; }
+      .live { color: #d8ff68; } .stored { color: #ffbe64; }
+      img, video { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; background: #080906; }
+      #detail { padding: 13px 14px; min-height: 48px; color: #e4dfcf; font-size: 14px; }
+      .empty { display: grid; place-items: center; aspect-ratio: 4 / 3; color: #9ca084; font-family: ui-monospace, monospace; font-size: 13px; }
+      .status-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+      .status-dot.ws { background: #d8ff68; } .status-dot.poll { background: #ffbe64; } .status-dot.err { background: #ff4444; }
+      .status-dot.idle { background: #666; }
+      /* ── Buttons ── */
+      .btn { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border: 1px solid #414630; background: #252a1d; color: #bbc09d; font-family: ui-monospace, monospace; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; cursor: pointer; transition: background .15s, color .15s; }
+      .btn:hover { background: #39411b; color: #d8ff68; }
+      .btn:active { background: #4a5528; }
+      .btn .icon { font-size: 13px; }
+      .btn.spinning .icon { animation: spin .8s linear infinite; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      /* ── Processing badge ── */
+      .proc-badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; font-family: ui-monospace, monospace; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+      .proc-badge .dot { width: 6px; height: 6px; border-radius: 50%; }
+      .proc-badge.active .dot { background: #d8ff68; animation: pulse 1s ease-in-out infinite alternate; }
+      .proc-badge.idle .dot { background: #555; }
+      @keyframes pulse { from { opacity: .5; } to { opacity: 1; } }
+      /* ── Clip container ── */
+      .clip-wrap { position: relative; }
+      .clip-overlay { display: none; position: absolute; inset: 0; background: #080906; color: #9ca084; font-family: ui-monospace, monospace; font-size: 13px; align-items: center; justify-content: center; flex-direction: column; gap: 10px; }
+      .clip-overlay.visible { display: flex; }
+      .clip-overlay .retry-info { color: #777; font-size: 11px; }
+      /* ── Snapshot display ── */
+      #snapshot { display: none; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; background: #080906; }
+      @media (max-width: 760px) { body { padding: 18px; } header { align-items: start; flex-direction: column; } main { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div><p>511NY · R10_255 · Frigate motion retention</p><h1>Live / Kept</h1></div>
+      <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+        <div id="proc-status" class="proc-badge idle"><span class="dot"></span><span id="proc-text">idle</span></div>
+        <p id="status"><span class="status-dot idle"></span>Connecting…</p>
+        <button class="btn" id="refresh-btn" title="Refresh Frigate feed"><span class="icon">↻</span> Refresh</button>
+      </div>
+    </header>
+    <main>
+      <section>
+        <div class="label"><span class="live">● actual feed</span><span>refreshes live</span></div>
+        <video id="live" muted autoplay playsinline aria-label="Live 511NY traffic camera"></video>
+      </section>
+      <section>
+        <div class="label">
+          <span><span class="stored">◆ newest retained event</span> <span id="event-label">waiting</span></span>
+          <span id="event-time" style="color:#777;font-size:11px;"></span>
+        </div>
+        <div class="clip-wrap">
+          <!-- Snapshot shown during active events (always available) -->
+          <img id="snapshot" alt="Event snapshot">
+          <!-- Clip shown after event ends (may need retry) -->
+          <video id="clip" controls muted playsinline></video>
+          <!-- Overlay for retry state -->
+          <div class="clip-overlay" id="clip-overlay">
+            <span id="overlay-msg">Preparing clip…</span>
+            <span class="retry-info" id="overlay-detail"></span>
+            <button class="btn" id="retry-btn"><span class="icon">↻</span> Retry now</button>
+          </div>
+        </div>
+        <div class="empty" id="empty">Waiting for Frigate to retain a motion event…</div>
+        <div id="detail">This panel shows the latest event clip Frigate retained.</div>
+      </section>
+    </main>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
+    <script>
+    (() => {
+      'use strict';
+
+      // ── DOM refs ──
+      const live        = document.querySelector('#live');
+      const clip        = document.querySelector('#clip');
+      const snapshot    = document.querySelector('#snapshot');
+      const clipOverlay = document.querySelector('#clip-overlay');
+      const overlayMsg  = document.querySelector('#overlay-msg');
+      const overlayDet  = document.querySelector('#overlay-detail');
+      const empty       = document.querySelector('#empty');
+      const detail      = document.querySelector('#detail');
+      const statusEl    = document.querySelector('#status');
+      const label       = document.querySelector('#event-label');
+      const timeEl      = document.querySelector('#event-time');
+      const procBadge   = document.querySelector('#proc-status');
+      const procText    = document.querySelector('#proc-text');
+      const refreshBtn  = document.querySelector('#refresh-btn');
+      const retryBtn    = document.querySelector('#retry-btn');
+
+      // ── Constants ──
+      const CLIP_INITIAL_DELAY = 1000;   // 1s before first clip attempt after event ends
+      const CLIP_MAX_DELAY     = 20000;  // 20s max between retries
+      const CLIP_BACKOFF       = 1.8;    // exponential multiplier
+      const CLIP_MAX_ATTEMPTS  = 15;     // give up after 15 attempts (~90s total)
+
+      // ── State ──
+      let currentEventId   = '';
+      let currentEventEnd  = null;
+      let currentEventStart= null;
+      let currentHasSnapshot = false;
+      let ws = null;
+      let wsReconnectDelay = 1000;
+      let pollTimer = null;
+      let fetchInFlight = false;
+      let consecutiveEmpty = 0;
+      let lastClipUrl = '';
+      let lastSnapshotUrl = '';
+
+      // Clip retry state
+      let clipRetryTimer = null;
+      let clipRetryAttempts = 0;
+      let clipRetryDelay = CLIP_INITIAL_DELAY;
+
+      // ── Helpers ──
+      function setStatus(mode, text) {
+        const dot = mode === 'ws' ? 'ws' : mode === 'poll' ? 'poll' : mode === 'idle' ? 'idle' : 'err';
+        statusEl.innerHTML = `<span class="status-dot ${dot}"></span>${text}`;
+      }
+
+      function setProcessing(active, text) {
+        procBadge.className = 'proc-badge ' + (active ? 'active' : 'idle');
+        procText.textContent = text || (active ? 'recording…' : 'idle');
+      }
+
+      function formatTime(ts) {
+        if (!ts) return '';
+        const d = new Date(ts * 1000);
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      }
+
+      function showView(view) {
+        // 'snapshot' | 'clip' | 'empty' | 'overlay'
+        snapshot.style.display    = view === 'snapshot' ? 'block' : 'none';
+        clip.style.display        = view === 'clip' ? 'block' : 'none';
+        clipOverlay.classList.toggle('visible', view === 'overlay');
+        empty.style.display       = view === 'empty' ? 'grid' : 'none';
+      }
+
+      // ── Snapshot loading (always fast — Frigate generates these immediately) ──
+      function loadSnapshot(eventId) {
+        lastSnapshotUrl = `/frigate/api/events/${eventId}/snapshot.jpg`;
+        snapshot.src = lastSnapshotUrl + '?t=' + Date.now();
+        showView('snapshot');
+      }
+
+      // ── Clip retry with exponential backoff ──
+      function startClipRetry(eventId) {
+        cancelClipRetry();
+        lastClipUrl = `/frigate/api/events/${eventId}/clip.mp4`;
+        clipRetryAttempts = 0;
+        clipRetryDelay = CLIP_INITIAL_DELAY;
+        scheduleClipAttempt();
+      }
+
+      function cancelClipRetry() {
+        if (clipRetryTimer) { clearTimeout(clipRetryTimer); clipRetryTimer = null; }
+        clipRetryAttempts = 0;
+      }
+
+      function scheduleClipAttempt() {
+        clipRetryTimer = setTimeout(() => attemptClipLoad(), clipRetryDelay);
+      }
+
+      function attemptClipLoad() {
+        if (!lastClipUrl) return;
+        clipRetryAttempts++;
+
+        if (clipRetryAttempts > CLIP_MAX_ATTEMPTS) {
+          // Exhausted — show manual retry
+          showView('overlay');
+          overlayMsg.textContent = 'Clip not ready yet';
+          overlayDet.textContent = `${CLIP_MAX_ATTEMPTS} attempts failed — click retry or wait`;
+          return;
+        }
+
+        // Show brief overlay with progress
+        showView('overlay');
+        overlayMsg.textContent = 'Preparing clip…';
+        overlayDet.textContent = `attempt ${clipRetryAttempts}/${CLIP_MAX_ATTEMPTS} (next in ${Math.round(clipRetryDelay/1000)}s)`;
+
+        // Try loading the clip
+        clip.src = lastClipUrl + '?t=' + Date.now();
+        clip.load();
+        clip.play().catch(() => {});
+      }
+
+      // ── Live HLS stream ──
+      const source = 'https://s52.nysdot.skyvdn.com/rtplive/R10_255/playlist.m3u8';
+      function startLive() {
+        if (live.canPlayType('application/vnd.apple.mpegurl')) {
+          live.src = source;
+        } else if (window.Hls?.isSupported()) {
+          const hls = new Hls();
+          hls.loadSource(source);
+          hls.attachMedia(live);
+        } else {
+          statusEl.textContent = 'HLS not supported';
+          return;
+        }
+        live.play().catch(() => {});
+      }
+
+      // ── Core: fetch latest event and update UI ──
+      async function refreshStored() {
+        if (fetchInFlight) return;
+        fetchInFlight = true;
+        try {
+          const cutoff = Math.floor(Date.now() / 1000 - 3600);
+          const r = await fetch(`/frigate/api/events?camera=test_camera&has_clip=1&limit=3&after=${cutoff}`);
+          if (!r.ok) throw new Error(r.status);
+          const events = await r.json();
+          const event = events[0];
+
+          if (!event) {
+            consecutiveEmpty++;
+            if (consecutiveEmpty > 5 && pollTimer) {
+              clearInterval(pollTimer);
+              pollTimer = setInterval(refreshStored, 8000);
+            }
+            fetchInFlight = false;
+            return;
+          }
+
+          // Reset polling speed
+          consecutiveEmpty = 0;
+          if (pollTimer) { clearInterval(pollTimer); pollTimer = setInterval(refreshStored, 3000); }
+
+          setStatus(ws && ws.readyState === 1 ? 'ws' : 'poll', 'Frigate connected');
+          label.textContent = event.label || 'motion';
+          timeEl.textContent = formatTime(event.start_time);
+
+          const isSameEvent   = event.id === currentEventId;
+          const endTimeChanged = event.end_time !== currentEventEnd;
+          const startTimeChanged = event.start_time !== currentEventStart;
+          const hasClip       = event.has_clip;
+          const hasSnapshot   = event.has_snapshot;
+
+          // ── Update processing status ──
+          if (!event.end_time) {
+            setProcessing(true, `recording ${event.label || 'event'}…`);
+          } else {
+            setProcessing(false, 'idle');
+          }
+
+          // ── New event ──
+          if (!isSameEvent || startTimeChanged) {
+            currentEventId    = event.id;
+            currentEventEnd   = event.end_time;
+            currentEventStart = event.start_time;
+            currentHasSnapshot = hasSnapshot;
+            cancelClipRetry();
+            empty.style.display = 'none';
+            detail.textContent = `${event.label || 'Motion'} — ${event.end_time ? 'completed' : 'still recording'} (camera: ${event.camera || 'test_camera'})`;
+
+            if (!event.end_time && hasSnapshot) {
+              // ── Active event → show snapshot immediately (clip not ready yet) ──
+              loadSnapshot(event.id);
+            } else if (event.end_time && hasClip) {
+              // ── Completed event → try clip with retry ──
+              startClipRetry(event.id);
+            } else if (hasSnapshot) {
+              // ── Completed but no clip yet → show snapshot + start retry ──
+              loadSnapshot(event.id);
+              if (hasClip) startClipRetry(event.id);
+            }
+          }
+          // ── Same event, end_time just set → event finished ──
+          else if (endTimeChanged && event.end_time) {
+            currentEventEnd = event.end_time;
+            setProcessing(false, 'idle');
+
+            if (hasClip) {
+              // Event just ended → start clip retry (segments may still be stitching)
+              cancelClipRetry();
+              startClipRetry(event.id);
+              detail.textContent = `${event.label || 'Motion'} — clip loading…`;
+            } else if (hasSnapshot) {
+              // No clip yet, keep showing snapshot
+              detail.textContent = `${event.label || 'Motion'} — waiting for clip…`;
+            }
+          }
+          // ── Same event, still active → update snapshot if we don't have clip ──
+          else if (!event.end_time && !lastClipUrl) {
+            if (hasSnapshot && snapshot.src !== (lastSnapshotUrl + '?t=' + currentEventId)) {
+              loadSnapshot(event.id);
+            }
+          }
+        } catch (e) {
+          setStatus('err', 'Frigate unavailable — retrying…');
+          setProcessing(false, 'error');
+        } finally {
+          fetchInFlight = false;
+        }
+      }
+
+      // ── Video event handlers ──
+      clip.addEventListener('playing', () => {
+        // Clip loaded successfully — switch from snapshot/overlay to clip
+        cancelClipRetry();
+        showView('clip');
+      });
+
+      clip.addEventListener('error', () => {
+        if (!lastClipUrl) return;
+        // Clip not ready → exponential backoff retry
+        if (clipRetryAttempts < CLIP_MAX_ATTEMPTS) {
+          clipRetryDelay = Math.min(clipRetryDelay * CLIP_BACKOFF, CLIP_MAX_DELAY);
+          scheduleClipAttempt();
+        } else {
+          showView('overlay');
+          overlayMsg.textContent = 'Clip not ready yet';
+          overlayDet.textContent = `${CLIP_MAX_ATTEMPTS} attempts — click retry or wait for next event`;
+        }
+      }, true);
+
+      clip.addEventListener('ended', () => {
+        // Video finished — stay on last frame, no error
+      });
+
+      // ── Retry button ──
+      retryBtn.addEventListener('click', () => {
+        if (!lastClipUrl) return;
+        clipRetryAttempts = 0;
+        clipRetryDelay = CLIP_INITIAL_DELAY;
+        cancelClipRetry();
+        showView('clip');
+        clip.src = lastClipUrl + '?retry=' + Date.now();
+        clip.load();
+        clip.play().catch(() => {});
+      });
+
+      // ── Manual refresh button ──
+      refreshBtn.addEventListener('click', () => {
+        refreshBtn.classList.add('spinning');
+        consecutiveEmpty = 0;
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = setInterval(refreshStored, 3000); }
+        cancelClipRetry();
+        refreshStored().finally(() => {
+          setTimeout(() => refreshBtn.classList.remove('spinning'), 400);
+        });
+      });
+
+      // ── Polling (3s active, 8s idle) ──
+      function startPolling() {
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = setInterval(refreshStored, 3000);
+        refreshStored();
+      }
+
+      // ── WebSocket (bonus real-time push) ──
+      function connectWs() {
+        try {
+          const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+          ws = new WebSocket(`${scheme}://${location.host}/frigate/ws`);
+          wsReconnectDelay = 1000;
+          ws.onopen = () => { setStatus('ws', 'Frigate events (live)'); };
+          ws.onmessage = (msg) => {
+            try {
+              const env = JSON.parse(msg.data);
+              if (env.topic !== 'events') return;
+              const ev = typeof env.payload === 'string' ? JSON.parse(env.payload) : env.payload;
+              if (ev && (ev.type === 'new' || ev.type === 'update' || ev.type === 'end')) {
+                refreshStored();
+              }
+            } catch { /* ignore */ }
+          };
+          ws.onclose = () => {
+            setStatus('poll', 'WS disconnected — polling active');
+            scheduleReconnect();
+          };
+          ws.onerror = () => { ws.close(); };
+        } catch { scheduleReconnect(); }
+      }
+
+      function scheduleReconnect() {
+        setTimeout(() => {
+          wsReconnectDelay = Math.min(wsReconnectDelay * 2, 16000);
+          connectWs();
+        }, wsReconnectDelay);
+      }
+
+      // ── Boot ──
+      startLive();
+      startPolling();
+      connectWs();
+    })();
+    </script>
+  </body>
+</html>

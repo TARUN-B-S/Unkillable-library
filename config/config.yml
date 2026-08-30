@@ -1,0 +1,71 @@
+mqtt:
+  enabled: false
+
+cameras:
+  test_camera:
+    ffmpeg:
+      inputs:
+        - path: rtsp://mediamtx:8554/test
+          input_args: preset-rtsp-restream
+          roles:
+            - detect
+            - record
+    detect:
+      enabled: true
+      width: 1280
+      height: 720
+      fps: 5
+    motion:
+      threshold: 30
+      contour_area: 30
+      mask: ''
+    record:
+      enabled: true
+      alerts:
+        retain:
+          days: 30
+      detections:
+        retain:
+          days: 30
+      continuous:
+        days: 0
+      motion:
+        days: 30
+    snapshots:
+      enabled: true
+      timestamp: true
+      bounding_box: true
+      retain:
+        default: 30
+    objects:
+      track:
+        - person
+        - car
+        - dog
+        - cat
+        - truck
+        - bicycle
+
+detectors:
+  cpu:
+    type: cpu
+
+semantic_search:
+  enabled: true
+  model: jinav1
+  model_size: small
+  reindex: false
+
+genai:
+  provider: ollama
+  base_url: http://host.docker.internal:11434
+  model: gemma4:31b-cloud
+record:
+  continuous:
+    days: 0
+  motion:
+    days: 30
+objects:
+  genai:
+    enabled: true
+version: 0.17-0

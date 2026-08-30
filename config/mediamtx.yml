@@ -1,0 +1,13 @@
+logLevel: info
+rtsp: true
+rtmp: false
+hls: false
+webrtc: false
+srt: false
+
+paths:
+  test:
+    source: publisher
+    record: false
+  all_others:
+    source: publisher

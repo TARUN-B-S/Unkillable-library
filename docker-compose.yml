@@ -1,0 +1,64 @@
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: mediamtx
+    restart: unless-stopped
+    ports:
+      - "8554:8554"
+      - "8888:8888"
+    volumes:
+      - ./config/mediamtx.yml:/mediamtx.yml
+
+  stream-bridge:
+    image: jrottenberg/ffmpeg:6.1-ubuntu
+    restart: unless-stopped
+    depends_on:
+      - mediamtx
+    entrypoint: ["/bin/bash"]
+    command:
+      - -c
+      - |
+        while true; do
+          ffmpeg -hide_banner -loglevel warning \
+            -live_start_index -1 \
+            -rw_timeout 15000000 \
+            -i "https://s52.nysdot.skyvdn.com/rtplive/R10_255/playlist.m3u8?cachebust=$$(date +%s)" \
+            -map 0:v:0 -c copy \
+            -rtsp_transport tcp -rtsp_flags prefer_tcp \
+            -f rtsp rtsp://mediamtx:8554/test || true
+          sleep 2
+        done
+    volumes:
+      - ./scripts/bridge_511ny_stream.sh:/bridge.sh:ro
+
+  frigate:
+    image: ghcr.io/blakeblackshear/frigate:stable
+    container_name: frigate
+    restart: unless-stopped
+    privileged: true
+    shm_size: "64mb"
+    ports:
+      - "5000:5000"
+      - "8555:8555"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./config/config.yml:/config/config.yml
+      - ./storage:/media/frigate
+      - type: tmpfs
+        target: /tmp/cache
+        tmpfs:
+          size: 1000000000
+    depends_on:
+      - mediamtx
+
+  monitor:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./dashboard:/usr/share/nginx/html:ro
+      - ./dashboard/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - frigate
