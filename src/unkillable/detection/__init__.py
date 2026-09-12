@@ -1,3 +1,3 @@
 from unkillable.detection.detector import Detection, Detector
 
-__all__ = ["Detector", "Detection"]
+__all__ = ["Detection", "Detector"]

@@ -68,7 +68,7 @@ class TestDashboard:
         r = requests.get(BASE_URL, timeout=5)
         assert r.status_code == 200
         assert "text/html" in r.headers.get("content-type", "")
-        assert "Traffic Retention Monitor" in r.text
+        assert "The Unkillable Library" in r.text
 
     def test_dashboard_has_refresh_button(self, wait_for_services):
         r = requests.get(BASE_URL, timeout=5)

@@ -33,7 +33,7 @@ unkillable-library/
 ├── .venv/                 # Python venv (virtualenv fallback)
 ├── src/unkillable/        # Python package
 │   ├── motion/            # FFmpeg scene detection (mode: motion)
-│   ├── detection/         # Object detector (YOLO or heuristic)
+│   ├── detection/         # Object detector (YOLO + color extraction)
 │   ├── semantic/          # CLIP embeddings + cosine search
 │   ├── genai/             # Ollama vision LLM describer
 │   ├── backup/            # QR encode/decode (paper backup)
@@ -44,3 +44,16 @@ unkillable-library/
 ├── storage/               # Clips, thumbnails, embeddings
 └── report.md / OPINIONS.md
 ```
+
+## Detection model
+
+Indexing uses a YOLO model (Ultralytics). The first run downloads the model
+automatically; `setup.sh` pre-warms the cache.
+
+- `UNKILLABLE_YOLO_MODEL` — model file to load (default `yolov8n.pt`, falls back to `yolo11n.pt`, then the built-in heuristic).
+- `UNKILLABLE_SKIP_MODEL_DOWNLOAD=1` — skip model loading entirely (offline/CI, heuristic mode).
+
+Each indexed frame records `objects` (label, confidence, bbox, area, dominant
+`color_hex`/`color_name`) and `counts` (label → count per frame). `/api/stats`
+adds per-clip totals and a color histogram; results expose the same fields for
+downstream use (e.g. feeding a color/object string to an LLM).

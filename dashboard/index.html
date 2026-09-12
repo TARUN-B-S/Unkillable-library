@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Traffic Retention Monitor</title>
+    <title>The Unkillable Library</title>
     <style>
       :root { color-scheme: dark; font-family: Georgia, serif; background: #11130f; color: #f5f0e4; }
       * { box-sizing: border-box; }
@@ -11,7 +11,18 @@
       header { max-width: 1400px; margin: 0 auto 28px; display: flex; justify-content: space-between; gap: 16px; align-items: end; flex-wrap: wrap; }
       h1 { margin: 0; font-size: clamp(28px, 5vw, 56px); font-weight: 500; letter-spacing: -.04em; }
       header p { margin: 0; color: #bbc09d; font-family: ui-monospace, monospace; font-size: 12px; }
-      main { max-width: 1400px; margin: auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+
+      /* ── Tabs ── */
+      .tabs { max-width: 1400px; margin: 0 auto 20px; display: flex; gap: 0; border-bottom: 1px solid #414630; }
+      .tab { padding: 10px 20px; font-family: ui-monospace, monospace; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; cursor: pointer; border: 1px solid transparent; border-bottom: none; background: transparent; color: #777; transition: all .15s; }
+      .tab:hover { color: #bbc09d; background: #1a1d17; }
+      .tab.active { color: #d8ff68; background: #1a1d17; border-color: #414630; border-bottom-color: #1a1d17; margin-bottom: -1px; }
+
+      .tab-content { display: none; max-width: 1400px; margin: auto; }
+      .tab-content.active { display: block; }
+
+      /* ── Live view ── */
+      main { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
       section { overflow: hidden; border: 1px solid #414630; background: #1a1d17; box-shadow: 0 18px 50px #0006; }
       .label { display: flex; justify-content: space-between; padding: 12px 14px; font-family: ui-monospace, monospace; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; background: #252a1d; align-items: center; }
       .live { color: #d8ff68; } .stored { color: #ffbe64; }
@@ -21,377 +32,491 @@
       .status-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
       .status-dot.ws { background: #d8ff68; } .status-dot.poll { background: #ffbe64; } .status-dot.err { background: #ff4444; }
       .status-dot.idle { background: #666; }
-      /* ── Buttons ── */
       .btn { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border: 1px solid #414630; background: #252a1d; color: #bbc09d; font-family: ui-monospace, monospace; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; cursor: pointer; transition: background .15s, color .15s; }
       .btn:hover { background: #39411b; color: #d8ff68; }
       .btn:active { background: #4a5528; }
       .btn .icon { font-size: 13px; }
       .btn.spinning .icon { animation: spin .8s linear infinite; }
       @keyframes spin { to { transform: rotate(360deg); } }
-      /* ── Processing badge ── */
       .proc-badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; font-family: ui-monospace, monospace; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
       .proc-badge .dot { width: 6px; height: 6px; border-radius: 50%; }
       .proc-badge.active .dot { background: #d8ff68; animation: pulse 1s ease-in-out infinite alternate; }
       .proc-badge.idle .dot { background: #555; }
       @keyframes pulse { from { opacity: .5; } to { opacity: 1; } }
-      /* ── Clip container ── */
       .clip-wrap { position: relative; }
       .clip-overlay { display: none; position: absolute; inset: 0; background: #080906; color: #9ca084; font-family: ui-monospace, monospace; font-size: 13px; align-items: center; justify-content: center; flex-direction: column; gap: 10px; }
       .clip-overlay.visible { display: flex; }
       .clip-overlay .retry-info { color: #777; font-size: 11px; }
-      /* ── Snapshot display ── */
       #snapshot { display: none; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; background: #080906; }
-      @media (max-width: 760px) { body { padding: 18px; } header { align-items: start; flex-direction: column; } main { grid-template-columns: 1fr; } }
+
+      /* ── Search view ── */
+      .search-bar { display: flex; gap: 10px; margin-bottom: 20px; }
+      .search-input { flex: 1; padding: 12px 16px; background: #1a1d17; border: 1px solid #414630; color: #f5f0e4; font-family: Georgia, serif; font-size: 16px; outline: none; transition: border-color .15s; }
+      .search-input:focus { border-color: #d8ff68; }
+      .search-input::placeholder { color: #555; }
+      .search-btn { padding: 12px 24px; background: #39411b; border: 1px solid #414630; color: #d8ff68; font-family: ui-monospace, monospace; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; cursor: pointer; transition: background .15s; }
+      .search-btn:hover { background: #4a5528; }
+      .search-filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+      .filter-chip { padding: 4px 12px; border: 1px solid #414630; background: #1a1d17; color: #777; font-family: ui-monospace, monospace; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; cursor: pointer; transition: all .15s; }
+      .filter-chip:hover { color: #bbc09d; border-color: #555; }
+      .filter-chip.active { color: #d8ff68; border-color: #d8ff68; background: #252a1d; }
+      .search-status { font-family: ui-monospace, monospace; font-size: 12px; color: #777; margin-bottom: 16px; }
+      .results-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+      .result-card { border: 1px solid #414630; background: #1a1d17; overflow: hidden; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+      .result-card:hover { border-color: #d8ff68; box-shadow: 0 4px 20px #0008; }
+      .result-card.selected { border-color: #d8ff68; }
+      .result-thumb { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #080906; }
+      .result-info { padding: 10px 12px; }
+      .result-time { font-family: ui-monospace, monospace; font-size: 12px; color: #d8ff68; margin-bottom: 4px; }
+      .result-labels { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px; }
+      .result-label { padding: 1px 6px; background: #252a1d; border: 1px solid #414630; font-family: ui-monospace, monospace; font-size: 10px; color: #bbc09d; }
+      .result-score { font-family: ui-monospace, monospace; font-size: 10px; color: #555; }
+      .result-empty { grid-column: 1 / -1; text-align: center; padding: 60px 20px; color: #555; font-family: ui-monospace, monospace; }
+
+      /* ── Detail panel ── */
+      .detail-panel { margin-top: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+      .detail-panel.hidden { display: none; }
+      .detail-video { width: 100%; aspect-ratio: 16/9; object-fit: contain; background: #080906; }
+      .detail-meta { padding: 16px; border: 1px solid #414630; background: #1a1d17; }
+      .detail-meta h3 { margin: 0 0 12px; font-size: 16px; font-weight: 500; }
+      .detail-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #252a1d; font-family: ui-monospace, monospace; font-size: 12px; }
+      .detail-row .key { color: #777; }
+      .detail-row .val { color: #e4dfcf; }
+      .detail-desc { margin-top: 12px; padding: 12px; background: #252a1d; border: 1px solid #414630; font-size: 13px; color: #bbc09d; line-height: 1.5; }
+      .detail-desc.empty { color: #555; font-style: italic; }
+
+      @media (max-width: 760px) {
+        body { padding: 18px; }
+        header { align-items: start; flex-direction: column; }
+        main { grid-template-columns: 1fr; }
+        .detail-panel { grid-template-columns: 1fr; }
+        .results-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+      }
     </style>
   </head>
   <body>
     <header>
-      <div><p>511NY · R10_255 · Frigate motion retention</p><h1>Live / Kept</h1></div>
+      <div><p>The Unkillable Library · local NVR</p><h1>Search &amp; Monitor</h1></div>
       <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
         <div id="proc-status" class="proc-badge idle"><span class="dot"></span><span id="proc-text">idle</span></div>
         <p id="status"><span class="status-dot idle"></span>Connecting…</p>
         <button class="btn" id="refresh-btn" title="Refresh Frigate feed"><span class="icon">↻</span> Refresh</button>
       </div>
     </header>
-    <main>
-      <section>
-        <div class="label"><span class="live">● actual feed</span><span>refreshes live</span></div>
-        <video id="live" muted autoplay playsinline aria-label="Live 511NY traffic camera"></video>
-      </section>
-      <section>
-        <div class="label">
-          <span><span class="stored">◆ newest retained event</span> <span id="event-label">waiting</span></span>
-          <span id="event-time" style="color:#777;font-size:11px;"></span>
-        </div>
-        <div class="clip-wrap">
-          <!-- Snapshot shown during active events (always available) -->
-          <img id="snapshot" alt="Event snapshot">
-          <!-- Clip shown after event ends (may need retry) -->
-          <video id="clip" controls muted playsinline></video>
-          <!-- Overlay for retry state -->
-          <div class="clip-overlay" id="clip-overlay">
-            <span id="overlay-msg">Preparing clip…</span>
-            <span class="retry-info" id="overlay-detail"></span>
-            <button class="btn" id="retry-btn"><span class="icon">↻</span> Retry now</button>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <div class="tab active" data-tab="live">● Live</div>
+      <div class="tab" data-tab="search">⌕ Search</div>
+    </div>
+
+    <!-- Live Tab -->
+    <div class="tab-content active" id="tab-live">
+      <main>
+        <section>
+          <div class="label"><span class="live">● actual feed</span><span>refreshes live</span></div>
+          <video id="live" muted autoplay playsinline aria-label="Live traffic camera"></video>
+        </section>
+        <section>
+          <div class="label">
+            <span><span class="stored">◆ newest retained event</span> <span id="event-label">waiting</span></span>
+            <span id="event-time" style="color:#777;font-size:11px;"></span>
           </div>
+          <div class="clip-wrap">
+            <img id="snapshot" alt="Event snapshot">
+            <video id="clip" controls muted playsinline></video>
+            <div class="clip-overlay" id="clip-overlay">
+              <span id="overlay-msg">Preparing clip…</span>
+              <span class="retry-info" id="overlay-detail"></span>
+              <button class="btn" id="retry-btn"><span class="icon">↻</span> Retry now</button>
+            </div>
+          </div>
+          <div class="empty" id="empty">Waiting for motion event…</div>
+          <div id="detail">This panel shows the latest event clip Frigate retained.</div>
+        </section>
+      </main>
+    </div>
+
+    <!-- Search Tab -->
+    <div class="tab-content" id="tab-search">
+      <div class="search-bar">
+        <input type="text" class="search-input" id="search-input" placeholder="Search video… e.g. 'red car', 'person walking', 'dog crossing'" autofocus>
+        <button class="search-btn" id="search-btn">Search</button>
+      </div>
+      <div class="search-filters">
+        <div class="filter-chip" data-label="person">Person</div>
+        <div class="filter-chip" data-label="car">Car</div>
+        <div class="filter-chip" data-label="truck">Truck</div>
+        <div class="filter-chip" data-label="dog">Dog</div>
+        <div class="filter-chip" data-label="cat">Cat</div>
+        <div class="filter-chip" data-label="bicycle">Bicycle</div>
+      </div>
+      <div class="search-status" id="search-status"></div>
+      <div class="results-grid" id="results-grid">
+        <div class="result-empty">Type a query and press Search to find frames</div>
+      </div>
+
+      <!-- Detail panel (hidden until a result is clicked) -->
+      <div class="detail-panel hidden" id="detail-panel">
+        <div>
+          <video class="detail-video" id="detail-video" controls muted playsinline></video>
         </div>
-        <div class="empty" id="empty">Waiting for Frigate to retain a motion event…</div>
-        <div id="detail">This panel shows the latest event clip Frigate retained.</div>
-      </section>
-    </main>
+        <div class="detail-meta">
+          <h3 id="detail-title">Frame Details</h3>
+          <div class="detail-row"><span class="key">Timestamp</span><span class="val" id="det-timestamp">—</span></div>
+          <div class="detail-row"><span class="key">Source Clip</span><span class="val" id="det-source">—</span></div>
+          <div class="detail-row"><span class="key">Labels</span><span class="val" id="det-labels">—</span></div>
+          <div class="detail-row"><span class="key">Counts</span><span class="val" id="det-counts">—</span></div>
+          <div class="detail-row"><span class="key">Objects</span><span id="det-objects"></span></div>
+          <div class="detail-row"><span class="key">Tags</span><span id="det-tags"></span></div>
+          <div class="detail-row"><span class="key">Detection Quality</span><span class="val" id="det-quality">—</span></div>
+          <div class="detail-row"><span class="key">Motion Score</span><span class="val" id="det-motion">—</span></div>
+          <div class="detail-row"><span class="key">Match Score</span><span class="val" id="det-score">—</span></div>
+          <button class="btn" id="describe-btn" style="margin-top:12px;"><span class="icon">✦</span> Describe with AI</button>
+          <div class="detail-desc empty" id="det-description">Click "Describe with AI" to generate a description</div>
+        </div>
+      </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
     <script>
     (() => {
       'use strict';
 
-      // ── DOM refs ──
-      const live        = document.querySelector('#live');
-      const clip        = document.querySelector('#clip');
-      const snapshot    = document.querySelector('#snapshot');
-      const clipOverlay = document.querySelector('#clip-overlay');
-      const overlayMsg  = document.querySelector('#overlay-msg');
-      const overlayDet  = document.querySelector('#overlay-detail');
-      const empty       = document.querySelector('#empty');
-      const detail      = document.querySelector('#detail');
-      const statusEl    = document.querySelector('#status');
-      const label       = document.querySelector('#event-label');
-      const timeEl      = document.querySelector('#event-time');
-      const procBadge   = document.querySelector('#proc-status');
-      const procText    = document.querySelector('#proc-text');
-      const refreshBtn  = document.querySelector('#refresh-btn');
-      const retryBtn    = document.querySelector('#retry-btn');
+      // ── Tab switching ──
+      const tabs = document.querySelectorAll('.tab');
+      const tabContents = document.querySelectorAll('.tab-content');
+      tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+          tabs.forEach(t => t.classList.remove('active'));
+          tabContents.forEach(c => c.classList.remove('active'));
+          tab.classList.add('active');
+          document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+        });
+      });
 
-      // ── Constants ──
-      const CLIP_INITIAL_DELAY = 1000;   // 1s before first clip attempt after event ends
-      const CLIP_MAX_DELAY     = 20000;  // 20s max between retries
-      const CLIP_BACKOFF       = 1.8;    // exponential multiplier
-      const CLIP_MAX_ATTEMPTS  = 15;     // give up after 15 attempts (~90s total)
+      // ══════════════════════════════════════════════════════════════
+      // LIVE VIEW (existing logic)
+      // ══════════════════════════════════════════════════════════════
+      const liveEl     = document.querySelector('#live');
+      const clipEl     = document.querySelector('#clip');
+      const snapshotEl = document.querySelector('#snapshot');
+      const clipOverlay= document.querySelector('#clip-overlay');
+      const overlayMsg = document.querySelector('#overlay-msg');
+      const overlayDet = document.querySelector('#overlay-detail');
+      const emptyEl    = document.querySelector('#empty');
+      const detailEl   = document.querySelector('#detail');
+      const statusEl   = document.querySelector('#status');
+      const labelEl    = document.querySelector('#event-label');
+      const timeEl     = document.querySelector('#event-time');
+      const procBadge  = document.querySelector('#proc-status');
+      const procText   = document.querySelector('#proc-text');
+      const refreshBtn = document.querySelector('#refresh-btn');
+      const retryBtn   = document.querySelector('#retry-btn');
 
-      // ── State ──
-      let currentEventId   = '';
-      let currentEventEnd  = null;
-      let currentEventStart= null;
-      let currentHasSnapshot = false;
-      let ws = null;
-      let wsReconnectDelay = 1000;
-      let pollTimer = null;
-      let fetchInFlight = false;
-      let consecutiveEmpty = 0;
-      let lastClipUrl = '';
-      let lastSnapshotUrl = '';
+      const CLIP_INITIAL_DELAY = 1000;
+      const CLIP_MAX_DELAY = 20000;
+      const CLIP_BACKOFF = 1.8;
+      const CLIP_MAX_ATTEMPTS = 15;
 
-      // Clip retry state
-      let clipRetryTimer = null;
-      let clipRetryAttempts = 0;
-      let clipRetryDelay = CLIP_INITIAL_DELAY;
+      let currentEventId = '', currentEventEnd = null, currentEventStart = null;
+      let ws = null, wsReconnectDelay = 1000, pollTimer = null, fetchInFlight = false;
+      let consecutiveEmpty = 0, lastClipUrl = '', lastSnapshotUrl = '';
+      let clipRetryTimer = null, clipRetryAttempts = 0, clipRetryDelay = CLIP_INITIAL_DELAY;
 
-      // ── Helpers ──
       function setStatus(mode, text) {
         const dot = mode === 'ws' ? 'ws' : mode === 'poll' ? 'poll' : mode === 'idle' ? 'idle' : 'err';
-        statusEl.innerHTML = `<span class="status-dot ${dot}"></span>${text}`;
+        statusEl.innerHTML = '<span class="status-dot ' + dot + '"></span>' + text;
       }
-
       function setProcessing(active, text) {
         procBadge.className = 'proc-badge ' + (active ? 'active' : 'idle');
         procText.textContent = text || (active ? 'recording…' : 'idle');
       }
-
       function formatTime(ts) {
         if (!ts) return '';
-        const d = new Date(ts * 1000);
-        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       }
-
-      function showView(view) {
-        // 'snapshot' | 'clip' | 'empty' | 'overlay'
-        snapshot.style.display    = view === 'snapshot' ? 'block' : 'none';
-        clip.style.display        = view === 'clip' ? 'block' : 'none';
+      function showLiveView(view) {
+        snapshotEl.style.display = view === 'snapshot' ? 'block' : 'none';
+        clipEl.style.display = view === 'clip' ? 'block' : 'none';
         clipOverlay.classList.toggle('visible', view === 'overlay');
-        empty.style.display       = view === 'empty' ? 'grid' : 'none';
+        emptyEl.style.display = view === 'empty' ? 'grid' : 'none';
       }
-
-      // ── Snapshot loading (always fast — Frigate generates these immediately) ──
       function loadSnapshot(eventId) {
-        lastSnapshotUrl = `/frigate/api/events/${eventId}/snapshot.jpg`;
-        snapshot.src = lastSnapshotUrl + '?t=' + Date.now();
-        showView('snapshot');
+        lastSnapshotUrl = '/frigate/api/events/' + eventId + '/snapshot.jpg';
+        snapshotEl.src = lastSnapshotUrl + '?t=' + Date.now();
+        showLiveView('snapshot');
       }
-
-      // ── Clip retry with exponential backoff ──
       function startClipRetry(eventId) {
         cancelClipRetry();
-        lastClipUrl = `/frigate/api/events/${eventId}/clip.mp4`;
+        lastClipUrl = '/frigate/api/events/' + eventId + '/clip.mp4';
         clipRetryAttempts = 0;
         clipRetryDelay = CLIP_INITIAL_DELAY;
         scheduleClipAttempt();
       }
-
       function cancelClipRetry() {
         if (clipRetryTimer) { clearTimeout(clipRetryTimer); clipRetryTimer = null; }
         clipRetryAttempts = 0;
       }
-
       function scheduleClipAttempt() {
         clipRetryTimer = setTimeout(() => attemptClipLoad(), clipRetryDelay);
       }
-
       function attemptClipLoad() {
         if (!lastClipUrl) return;
         clipRetryAttempts++;
-
         if (clipRetryAttempts > CLIP_MAX_ATTEMPTS) {
-          // Exhausted — show manual retry
-          showView('overlay');
+          showLiveView('overlay');
           overlayMsg.textContent = 'Clip not ready yet';
-          overlayDet.textContent = `${CLIP_MAX_ATTEMPTS} attempts failed — click retry or wait`;
+          overlayDet.textContent = CLIP_MAX_ATTEMPTS + ' attempts failed — click retry or wait';
           return;
         }
-
-        // Show brief overlay with progress
-        showView('overlay');
+        showLiveView('overlay');
         overlayMsg.textContent = 'Preparing clip…';
-        overlayDet.textContent = `attempt ${clipRetryAttempts}/${CLIP_MAX_ATTEMPTS} (next in ${Math.round(clipRetryDelay/1000)}s)`;
-
-        // Try loading the clip
-        clip.src = lastClipUrl + '?t=' + Date.now();
-        clip.load();
-        clip.play().catch(() => {});
+        overlayDet.textContent = 'attempt ' + clipRetryAttempts + '/' + CLIP_MAX_ATTEMPTS + ' (next in ' + Math.round(clipRetryDelay/1000) + 's)';
+        clipEl.src = lastClipUrl + '?t=' + Date.now();
+        clipEl.load();
+        clipEl.play().catch(() => {});
       }
 
-      // ── Live HLS stream ──
-      const source = 'https://s52.nysdot.skyvdn.com/rtplive/R10_255/playlist.m3u8';
+      // Live HLS
+      const hlsSource = 'https://s52.nysdot.skyvdn.com/rtplive/R10_255/playlist.m3u8';
       function startLive() {
-        if (live.canPlayType('application/vnd.apple.mpegurl')) {
-          live.src = source;
-        } else if (window.Hls?.isSupported()) {
+        if (liveEl.canPlayType('application/vnd.apple.mpegurl')) {
+          liveEl.src = hlsSource;
+        } else if (window.Hls && Hls.isSupported()) {
           const hls = new Hls();
-          hls.loadSource(source);
-          hls.attachMedia(live);
+          hls.loadSource(hlsSource);
+          hls.attachMedia(liveEl);
         } else {
           statusEl.textContent = 'HLS not supported';
           return;
         }
-        live.play().catch(() => {});
+        liveEl.play().catch(() => {});
       }
 
-      // ── Core: fetch latest event and update UI ──
       async function refreshStored() {
         if (fetchInFlight) return;
         fetchInFlight = true;
         try {
           const cutoff = Math.floor(Date.now() / 1000 - 3600);
-          const r = await fetch(`/frigate/api/events?camera=test_camera&has_clip=1&limit=3&after=${cutoff}`);
+          const r = await fetch('/frigate/api/events?camera=test_camera&has_clip=1&limit=3&after=' + cutoff);
           if (!r.ok) throw new Error(r.status);
           const events = await r.json();
           const event = events[0];
-
           if (!event) {
             consecutiveEmpty++;
-            if (consecutiveEmpty > 5 && pollTimer) {
-              clearInterval(pollTimer);
-              pollTimer = setInterval(refreshStored, 8000);
-            }
+            if (consecutiveEmpty > 5 && pollTimer) { clearInterval(pollTimer); pollTimer = setInterval(refreshStored, 8000); }
             fetchInFlight = false;
             return;
           }
-
-          // Reset polling speed
           consecutiveEmpty = 0;
           if (pollTimer) { clearInterval(pollTimer); pollTimer = setInterval(refreshStored, 3000); }
-
           setStatus(ws && ws.readyState === 1 ? 'ws' : 'poll', 'Frigate connected');
-          label.textContent = event.label || 'motion';
+          labelEl.textContent = event.label || 'motion';
           timeEl.textContent = formatTime(event.start_time);
-
-          const isSameEvent   = event.id === currentEventId;
+          const isSameEvent = event.id === currentEventId;
           const endTimeChanged = event.end_time !== currentEventEnd;
           const startTimeChanged = event.start_time !== currentEventStart;
-          const hasClip       = event.has_clip;
-          const hasSnapshot   = event.has_snapshot;
-
-          // ── Update processing status ──
-          if (!event.end_time) {
-            setProcessing(true, `recording ${event.label || 'event'}…`);
-          } else {
-            setProcessing(false, 'idle');
-          }
-
-          // ── New event ──
+          if (!event.end_time) setProcessing(true, 'recording ' + (event.label || 'event') + '…');
+          else setProcessing(false, 'idle');
           if (!isSameEvent || startTimeChanged) {
-            currentEventId    = event.id;
-            currentEventEnd   = event.end_time;
-            currentEventStart = event.start_time;
-            currentHasSnapshot = hasSnapshot;
-            cancelClipRetry();
-            empty.style.display = 'none';
-            detail.textContent = `${event.label || 'Motion'} — ${event.end_time ? 'completed' : 'still recording'} (camera: ${event.camera || 'test_camera'})`;
-
-            if (!event.end_time && hasSnapshot) {
-              // ── Active event → show snapshot immediately (clip not ready yet) ──
-              loadSnapshot(event.id);
-            } else if (event.end_time && hasClip) {
-              // ── Completed event → try clip with retry ──
-              startClipRetry(event.id);
-            } else if (hasSnapshot) {
-              // ── Completed but no clip yet → show snapshot + start retry ──
-              loadSnapshot(event.id);
-              if (hasClip) startClipRetry(event.id);
-            }
-          }
-          // ── Same event, end_time just set → event finished ──
-          else if (endTimeChanged && event.end_time) {
-            currentEventEnd = event.end_time;
-            setProcessing(false, 'idle');
-
-            if (hasClip) {
-              // Event just ended → start clip retry (segments may still be stitching)
-              cancelClipRetry();
-              startClipRetry(event.id);
-              detail.textContent = `${event.label || 'Motion'} — clip loading…`;
-            } else if (hasSnapshot) {
-              // No clip yet, keep showing snapshot
-              detail.textContent = `${event.label || 'Motion'} — waiting for clip…`;
-            }
-          }
-          // ── Same event, still active → update snapshot if we don't have clip ──
-          else if (!event.end_time && !lastClipUrl) {
-            if (hasSnapshot && snapshot.src !== (lastSnapshotUrl + '?t=' + currentEventId)) {
-              loadSnapshot(event.id);
-            }
+            currentEventId = event.id; currentEventEnd = event.end_time; currentEventStart = event.start_time;
+            cancelClipRetry(); emptyEl.style.display = 'none';
+            detailEl.textContent = (event.label || 'Motion') + ' — ' + (event.end_time ? 'completed' : 'still recording');
+            if (!event.end_time && event.has_snapshot) loadSnapshot(event.id);
+            else if (event.end_time && event.has_clip) startClipRetry(event.id);
+            else if (event.has_snapshot) { loadSnapshot(event.id); if (event.has_clip) startClipRetry(event.id); }
+          } else if (endTimeChanged && event.end_time) {
+            currentEventEnd = event.end_time; setProcessing(false, 'idle');
+            if (event.has_clip) { cancelClipRetry(); startClipRetry(event.id); detailEl.textContent = (event.label || 'Motion') + ' — clip loading…'; }
+            else if (event.has_snapshot) detailEl.textContent = (event.label || 'Motion') + ' — waiting for clip…';
           }
         } catch (e) {
           setStatus('err', 'Frigate unavailable — retrying…');
           setProcessing(false, 'error');
-        } finally {
-          fetchInFlight = false;
-        }
+        } finally { fetchInFlight = false; }
       }
 
-      // ── Video event handlers ──
-      clip.addEventListener('playing', () => {
-        // Clip loaded successfully — switch from snapshot/overlay to clip
-        cancelClipRetry();
-        showView('clip');
-      });
-
-      clip.addEventListener('error', () => {
+      clipEl.addEventListener('playing', () => { cancelClipRetry(); showLiveView('clip'); });
+      clipEl.addEventListener('error', () => {
         if (!lastClipUrl) return;
-        // Clip not ready → exponential backoff retry
-        if (clipRetryAttempts < CLIP_MAX_ATTEMPTS) {
-          clipRetryDelay = Math.min(clipRetryDelay * CLIP_BACKOFF, CLIP_MAX_DELAY);
-          scheduleClipAttempt();
-        } else {
-          showView('overlay');
-          overlayMsg.textContent = 'Clip not ready yet';
-          overlayDet.textContent = `${CLIP_MAX_ATTEMPTS} attempts — click retry or wait for next event`;
-        }
+        if (clipRetryAttempts < CLIP_MAX_ATTEMPTS) { clipRetryDelay = Math.min(clipRetryDelay * CLIP_BACKOFF, CLIP_MAX_DELAY); scheduleClipAttempt(); }
+        else { showLiveView('overlay'); overlayMsg.textContent = 'Clip not ready yet'; overlayDet.textContent = CLIP_MAX_ATTEMPTS + ' attempts'; }
       }, true);
-
-      clip.addEventListener('ended', () => {
-        // Video finished — stay on last frame, no error
-      });
-
-      // ── Retry button ──
       retryBtn.addEventListener('click', () => {
         if (!lastClipUrl) return;
-        clipRetryAttempts = 0;
-        clipRetryDelay = CLIP_INITIAL_DELAY;
-        cancelClipRetry();
-        showView('clip');
-        clip.src = lastClipUrl + '?retry=' + Date.now();
-        clip.load();
-        clip.play().catch(() => {});
+        clipRetryAttempts = 0; clipRetryDelay = CLIP_INITIAL_DELAY; cancelClipRetry();
+        showLiveView('clip'); clipEl.src = lastClipUrl + '?retry=' + Date.now(); clipEl.load(); clipEl.play().catch(() => {});
       });
-
-      // ── Manual refresh button ──
       refreshBtn.addEventListener('click', () => {
-        refreshBtn.classList.add('spinning');
-        consecutiveEmpty = 0;
+        refreshBtn.classList.add('spinning'); consecutiveEmpty = 0;
         if (pollTimer) { clearInterval(pollTimer); pollTimer = setInterval(refreshStored, 3000); }
-        cancelClipRetry();
-        refreshStored().finally(() => {
-          setTimeout(() => refreshBtn.classList.remove('spinning'), 400);
-        });
+        cancelClipRetry(); refreshStored().finally(() => setTimeout(() => refreshBtn.classList.remove('spinning'), 400));
       });
 
-      // ── Polling (3s active, 8s idle) ──
       function startPolling() {
         if (pollTimer) clearInterval(pollTimer);
         pollTimer = setInterval(refreshStored, 3000);
         refreshStored();
       }
-
-      // ── WebSocket (bonus real-time push) ──
       function connectWs() {
         try {
           const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-          ws = new WebSocket(`${scheme}://${location.host}/frigate/ws`);
+          ws = new WebSocket(scheme + '://' + location.host + '/frigate/ws');
           wsReconnectDelay = 1000;
-          ws.onopen = () => { setStatus('ws', 'Frigate events (live)'); };
+          ws.onopen = () => setStatus('ws', 'Frigate events (live)');
           ws.onmessage = (msg) => {
             try {
               const env = JSON.parse(msg.data);
               if (env.topic !== 'events') return;
               const ev = typeof env.payload === 'string' ? JSON.parse(env.payload) : env.payload;
-              if (ev && (ev.type === 'new' || ev.type === 'update' || ev.type === 'end')) {
-                refreshStored();
-              }
-            } catch { /* ignore */ }
+              if (ev && (ev.type === 'new' || ev.type === 'update' || ev.type === 'end')) refreshStored();
+            } catch {}
           };
-          ws.onclose = () => {
-            setStatus('poll', 'WS disconnected — polling active');
-            scheduleReconnect();
-          };
-          ws.onerror = () => { ws.close(); };
+          ws.onclose = () => { setStatus('poll', 'WS disconnected — polling active'); scheduleReconnect(); };
+          ws.onerror = () => ws.close();
         } catch { scheduleReconnect(); }
       }
-
       function scheduleReconnect() {
-        setTimeout(() => {
-          wsReconnectDelay = Math.min(wsReconnectDelay * 2, 16000);
-          connectWs();
-        }, wsReconnectDelay);
+        setTimeout(() => { wsReconnectDelay = Math.min(wsReconnectDelay * 2, 16000); connectWs(); }, wsReconnectDelay);
       }
+
+      // ══════════════════════════════════════════════════════════════
+      // SEARCH VIEW
+      // ══════════════════════════════════════════════════════════════
+      const searchInput = document.querySelector('#search-input');
+      const searchBtn   = document.querySelector('#search-btn');
+      const searchStatus= document.querySelector('#search-status');
+      const resultsGrid = document.querySelector('#results-grid');
+      const detailPanel = document.querySelector('#detail-panel');
+      const detailVideo = document.querySelector('#detail-video');
+      const detTimestamp= document.querySelector('#det-timestamp');
+      const detSource   = document.querySelector('#det-source');
+      const detLabels   = document.querySelector('#det-labels');
+      const detCounts   = document.querySelector('#det-counts');
+      const detObjects  = document.querySelector('#det-objects');
+      const detTags     = document.querySelector('#det-tags');
+      const detQuality  = document.querySelector('#det-quality');
+      const detMotion   = document.querySelector('#det-motion');
+      const detScore    = document.querySelector('#det-score');
+      const detDesc     = document.querySelector('#det-description');
+      const describeBtn = document.querySelector('#describe-btn');
+      const filterChips = document.querySelectorAll('.filter-chip');
+
+      let activeFilters = new Set();
+      let currentResultId = null;
+
+      filterChips.forEach(chip => {
+        chip.addEventListener('click', () => {
+          const label = chip.dataset.label;
+          if (activeFilters.has(label)) { activeFilters.delete(label); chip.classList.remove('active'); }
+          else { activeFilters.add(label); chip.classList.add('active'); }
+        });
+      });
+
+      async function doSearch() {
+        const q = searchInput.value.trim();
+        if (!q) return;
+        searchStatus.textContent = 'Searching…';
+        resultsGrid.innerHTML = '';
+        detailPanel.classList.add('hidden');
+
+        const labels = activeFilters.size > 0 ? '&labels=' + Array.from(activeFilters).join(',') : '';
+        try {
+          const r = await fetch('/api/search?q=' + encodeURIComponent(q) + labels + '&top_k=20&clips=false');
+          if (!r.ok) throw new Error(r.status);
+          const data = await r.json();
+          searchStatus.textContent = data.count + ' result' + (data.count !== 1 ? 's' : '') + ' for "' + q + '"';
+          if (data.count === 0) {
+            resultsGrid.innerHTML = '<div class="result-empty">No matching frames found. Try different keywords or remove filters.</div>';
+            return;
+          }
+          data.results.forEach((res, i) => {
+            const card = document.createElement('div');
+            card.className = 'result-card';
+            const countsHtml = (res.counts && Object.keys(res.counts).length > 0)
+              ? Object.entries(res.counts).map(([k, v]) => '<span class="result-label">' + k + ' ×' + v + '</span>').join('')
+              : '';
+            const colorsHtml = (res.colors && res.colors.length > 0)
+              ? res.colors.map(c => '<span class="result-label">' + c + '</span>').join('')
+              : '';
+            const tagsHtml = (res.tags && res.tags.length > 0)
+              ? res.tags.slice(0, 3).map(t => '<span class="result-label" style="background:#eef2ff;border-color:#c7d2fe;">' + t + '</span>').join('')
+              : '';
+            const brkd = res.score_breakdown || {};
+            const brkdHtml = ['label', 'color', 'size', 'semantic'].map(k =>
+              (typeof brkd[k + '_match'] === 'number') ? k + ':' + brkd[k + '_match'].toFixed(2) : ''
+            ).filter(Boolean).join(' ');
+            card.innerHTML =
+              '<img class="result-thumb" src="/api/frame/' + res.id + '" alt="Frame ' + (i+1) + '" loading="lazy" onerror="this.style.display=\'none\'">' +
+              '<div class="result-info">' +
+                '<div class="result-time">' + res.timestamp_str + '</div>' +
+                '<div class="result-labels">' + countsHtml + colorsHtml + '</div>' +
+                (tagsHtml ? '<div class="result-labels">' + tagsHtml + '</div>' : '') +
+                '<div class="result-score">score: ' + res.score.toFixed(3) + (brkdHtml ? '  ·  ' + brkdHtml : '') + '</div>' +
+              '</div>';
+            card.addEventListener('click', () => showDetail(res));
+            resultsGrid.appendChild(card);
+          });
+        } catch (e) {
+          searchStatus.textContent = 'Search failed: ' + e.message;
+          resultsGrid.innerHTML = '<div class="result-empty">Search failed. Is the API running?</div>';
+        }
+      }
+
+      function showDetail(res) {
+        currentResultId = res.id;
+        detailPanel.classList.remove('hidden');
+        // Highlight selected card
+        document.querySelectorAll('.result-card').forEach(c => c.classList.remove('selected'));
+        event.currentTarget?.classList.add('selected');
+
+        detTimestamp.textContent = res.timestamp_str + ' (' + res.timestamp.toFixed(1) + 's)';
+        detSource.textContent = res.source_clip.split('/').pop();
+        detLabels.textContent = res.labels.length > 0 ? res.labels.join(', ') : 'none detected';
+        detCounts.textContent = (res.counts && Object.keys(res.counts).length > 0)
+          ? Object.entries(res.counts).map(([k, v]) => k + ' ×' + v).join(', ')
+          : 'none';
+        detObjects.innerHTML = (res.objects && res.objects.length > 0)
+          ? res.objects.map(o =>
+              '<span class="result-label" style="' + (o.color_hex ? 'color:' + o.color_hex + ';border-color:' + o.color_hex + ';' : '') + '">' +
+              o.label + ' ' + o.confidence.toFixed(2) + (o.color_name ? ' ' + o.color_name : '') + (o.size ? ' [' + o.size + ']' : '') + '</span>'
+            ).join(' ')
+          : '<span class="result-label" style="color:#555;">no objects</span>';
+        detTags.innerHTML = (res.tags && res.tags.length > 0)
+          ? res.tags.map(t => '<span class="result-label" style="background:#eef2ff;border-color:#c7d2fe;">' + t + '</span>').join(' ')
+          : '<span class="result-label" style="color:#555;">none</span>';
+        const quality = res.score_breakdown && typeof res.score_breakdown.quality === 'number'
+          ? res.score_breakdown.quality
+          : (res.detection_confidence || 0);
+        detQuality.textContent = quality.toFixed(3);
+        detMotion.textContent = res.motion_score.toFixed(3);
+        detScore.textContent = res.score.toFixed(4);
+        detDesc.textContent = 'Click "Describe with AI" to generate a description';
+        detDesc.classList.add('empty');
+
+        // Load clip
+        detailVideo.src = '/api/clip/' + res.id + '?duration=5';
+        detailVideo.load();
+        detailVideo.play().catch(() => {});
+      }
+
+      describeBtn.addEventListener('click', async () => {
+        if (!currentResultId) return;
+        detDesc.textContent = 'Generating description…';
+        detDesc.classList.remove('empty');
+        try {
+          const r = await fetch('/api/describe/' + currentResultId, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+          if (!r.ok) throw new Error(r.status);
+          const data = await r.json();
+          detDesc.textContent = data.description;
+        } catch (e) {
+          detDesc.textContent = 'Description failed: ' + e.message;
+        }
+      });
+
+      searchBtn.addEventListener('click', doSearch);
+      searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
 
       // ── Boot ──
       startLive();

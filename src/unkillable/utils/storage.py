@@ -18,11 +18,14 @@ class Storage:
         self.clips = self.root / "clips"
         self.thumbnails = self.root / "thumbnails"
         self.embeddings = self.root / "embeddings"
+        self.index_dir = self.root / "index"
+        self.index_thumbs = self.index_dir / "thumbnails"
+        self.query_cache = self.root / "query_cache"
         self.events_file = self.root / "events.jsonl"
 
     def ensure_dirs(self) -> None:
         try:
-            for p in [self.clips, self.thumbnails, self.embeddings]:
+            for p in [self.clips, self.thumbnails, self.embeddings, self.index_dir, self.index_thumbs, self.query_cache]:
                 p.mkdir(parents=True, exist_ok=True)
             log.info("Storage dirs ready at %s", self.root)
         except OSError as exc:
@@ -71,3 +74,18 @@ class Storage:
                 log.warning("Cleanup failed for %s: %s", path, exc)
         log.info("Cleanup removed %d files older than %d days", removed, days)
         return removed
+
+    def index_count(self) -> int:
+        """Return number of entries in the video index."""
+        entries_file = self.index_dir / "entries.jsonl"
+        if not entries_file.exists():
+            return 0
+        count = 0
+        try:
+            with open(entries_file, encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        count += 1
+        except OSError:
+            pass
+        return count

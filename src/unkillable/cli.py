@@ -48,13 +48,21 @@ def thumbnail(input: str, output: str = "storage/thumbnails/thumb.jpg", timestam
 
 
 @app.command()
-def detect(image: str, labels: str = "person,car,dog") -> None:
-    det = Detector(track_labels=labels.split(","))
+def detect(
+    image: str,
+    labels: str = "person,car,dog",
+    model: str = typer.Option(None, help="YOLO model file name (default: yolov8n.pt)"),
+) -> None:
+    det = Detector(track_labels=labels.split(","), model_name=model)
     try:
         results = det.detect(Path(image))
+        counts = Detector.counts(results)
         console.print(f"[green]Detections: {len(results)}[/green]")
         for r in results:
-            console.print(f"  {r.label} {r.confidence:.2f} {r.bbox}")
+            color = f" {r.color_name} ({r.color_hex})" if r.color_name else ""
+            console.print(f"  {r.label} {r.confidence:.2f} {r.bbox}{color}")
+        if counts:
+            console.print(f"[cyan]Counts: {counts}[/cyan]")
     except Exception as exc:
         console.print(f"[red]Detect failed: {exc}[/red]")
         raise typer.Exit(1)
@@ -125,6 +133,88 @@ def storage_info(root: str = "storage") -> None:
     s.ensure_dirs()
     console.print(s.disk_usage())
     console.print(f"Events: {len(s.load_events(limit=1000))}")
+
+
+# ── Video Search Commands ──────────────────────────────────────────
+
+@app.command()
+def index(
+    clip: str = typer.Argument(..., help="Path to video clip or RTSP URL to index"),
+    camera: str = "default",
+    storage_root: str = "storage",
+    motion_threshold: float = 0.02,
+) -> None:
+    """Index a video clip: extract keyframes, detect objects, embed for search."""
+    from unkillable.index.engine import IndexEngine
+
+    ie = IndexEngine(storage_root=Path(storage_root), motion_threshold=motion_threshold)
+    try:
+        entries = ie.index_clip(Path(clip), camera=camera)
+        console.print(f"[green]Indexed {len(entries)} frames from {clip}[/green]")
+        for e in entries[:10]:
+            counts_str = ", ".join(f"{k}={v}" for k, v in e.counts.items()) or "none"
+            console.print(f"  [cyan]{e.id}[/cyan] t={e.timestamp_str} counts=[{counts_str}]")
+        if len(entries) > 10:
+            console.print(f"  ... and {len(entries) - 10} more")
+        if entries:
+            clip_totals = IndexEngine.clip_counts(entries)[str(Path(clip).resolve())]
+            if clip_totals:
+                console.print(f"[green]Clip totals: {clip_totals}[/green]")
+    except Exception as exc:
+        console.print(f"[red]Index failed: {exc}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def query(
+    text: str = typer.Argument(..., help="Natural language query"),
+    top_k: int = 5,
+    labels: str = "",
+    storage_root: str = "storage",
+    clip_duration: float = 5.0,
+    no_clips: bool = False,
+) -> None:
+    """Search indexed video frames by natural language query."""
+    from unkillable.index.engine import IndexEngine
+    from unkillable.query.engine import QueryEngine
+
+    ie = IndexEngine(storage_root=Path(storage_root))
+    qe = QueryEngine(index_engine=ie, storage_root=Path(storage_root), clip_duration=clip_duration)
+    label_list = [l.strip() for l in labels.split(",") if l.strip()] or None
+
+    try:
+        results = qe.query(text, top_k=top_k, labels=label_list, generate_clips=not no_clips)
+        if not results:
+            console.print("[yellow]No results found[/yellow]")
+            return
+        console.print(f"[green]{len(results)} results for '{text}'[/green]")
+        for r in results:
+            labels_str = ", ".join(r.entry.labels) if r.entry.labels else "none"
+            clip_info = f" clip={r.clip_path}" if r.clip_path else ""
+            console.print(
+                f"  [cyan]{r.entry.id}[/cyan] t={r.entry.timestamp_str} "
+                f"score={r.score:.3f} labels=[{labels_str}]{clip_info}"
+            )
+    except Exception as exc:
+        console.print(f"[red]Query failed: {exc}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def serve(
+    host: str = "0.0.0.0",
+    port: int = 5001,
+    storage_root: str = "storage",
+    debug: bool = False,
+) -> None:
+    """Start the search API server for the dashboard."""
+    from unkillable.api import app, init_engines
+
+    init_engines(storage_root=Path(storage_root))
+    console.print(f"[green]Starting API server on {host}:{port}[/green]")
+    console.print(f"Dashboard: http://localhost:{port}")
+    console.print(f"Search API: http://localhost:{port}/api/search?q=your+query")
+    app.run(host=host, port=port, debug=debug)
 
 
 if __name__ == "__main__":

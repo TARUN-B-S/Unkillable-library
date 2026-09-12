@@ -18,6 +18,16 @@ echo "Installing requirements..."
 "$VENV/bin/pip" install --upgrade pip
 "$VENV/bin/pip" install -r "$ROOT/requirements.txt"
 
+echo "Pre-warming YOLO model cache..."
+"$VENV/bin/unkillable" --help >/dev/null 2>&1 || true
+UNKILLABLE_YOLO_MODEL="${UNKILLABLE_YOLO_MODEL:-yolov8n.pt}" "$VENV/bin/python" - <<'PY' || echo "WARNING: model pre-warm failed — will download on first detect"
+import os, importlib.util
+if importlib.util.find_spec("ultralytics"):
+    from ultralytics import YOLO
+    YOLO(os.environ.get("UNKILLABLE_YOLO_MODEL", "yolov8n.pt"))
+    print("YOLO model cached.")
+PY
+
 echo "Creating storage dirs..."
 mkdir -p "$ROOT/storage"/{clips,thumbnails,embeddings}
 

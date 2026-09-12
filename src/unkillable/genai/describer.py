@@ -13,7 +13,7 @@ class DescriberError(RuntimeError):
 
 
 class Describer:
-    def __init__(self, provider: str = "ollama", base_url: str = "http://localhost:11434", model: str = "qwen3-vl:8b-instruct", timeout: int = 60) -> None:
+    def __init__(self, provider: str = "ollama", base_url: str = "http://localhost:11434", model: str = "gemma4:31b-cloud", timeout: int = 60) -> None:
         self.provider = provider
         self.base_url = base_url.rstrip("/")
         self.model = model

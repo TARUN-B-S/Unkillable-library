@@ -7,3 +7,5 @@ storage/
 *.pdf
 ollama_data/
 .DS_Store
+yolov8n.pt
+graphify-out/

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,12 +17,32 @@ class SearchResult:
     metadata: dict
 
 
+def _token_features(text: str) -> list[str]:
+    """Lexical features of a text: word tokens plus char-bigrams.
+
+    Bigrams make the fallback embedding tolerant to word shape variance
+    ("trucks" still partially matches "truck").
+    """
+    words = re.findall(r"[a-z]+", text.lower())
+    feats: list[str] = []
+    for w in words:
+        feats.append("$" + w)
+        if len(w) > 2:
+            feats.extend(w[i : i + 2] for i in range(len(w) - 1))
+    return feats
+
+
 def _hash_embedding(text: str, dim: int = 512) -> list[float]:
-    h = hashlib.sha256(text.encode()).digest()
-    vec: list[float] = []
-    for i in range(dim):
-        b = h[i % len(h)]
-        vec.append((b / 127.5) - 1.0)
+    """Deterministic bag-of-features embedding (used when no real encoder).
+
+    Documents sharing vocabulary get a higher cosine, so the fallback actually
+    ranks by lexical overlap instead of hashing each string to noise.
+    """
+    vec: list[float] = [0.0] * dim
+    for feat in _token_features(text):
+        digest = hashlib.md5(feat.encode()).digest()
+        bucket = int.from_bytes(digest[:4], "big") % dim
+        vec[bucket] += 1.0
     norm = math.sqrt(sum(x * x for x in vec)) or 1.0
     return [x / norm for x in vec]
 
