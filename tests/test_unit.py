@@ -1695,6 +1695,111 @@ class TestHybridScoring:
         assert results[0].entry.id == "smalldog"
         assert results[0].score_breakdown["size_match"] == 1.0
 
+    def _objs(self, *triples):
+        """Build objects from (label, color_name, size) triples."""
+        return [
+            {"label": lbl, "color_name": col, "size": size,
+             "confidence": 0.9, "bbox": [0, 0, 10, 10], "area": 100.0}
+            for lbl, col, size in triples
+        ]
+
+    def test_color_tied_to_label(self, tmp_path):
+        """'gray truck' must require one object that is BOTH gray and a truck."""
+        from unkillable.index.models import IndexEntry
+        from unkillable.query.engine import QueryEngine
+        from unkillable.semantic.search import SemanticSearch
+
+        ie = self._entry_path(tmp_path)
+        ss = SemanticSearch(db_path=tmp_path / "index" / "entries.jsonl")
+        vec = ss.embed_text("gray truck")
+        entries = [
+            IndexEntry(
+                id="truepair", timestamp=1.0, source_clip="c", thumbnail_path="t1",
+                embedding=vec, labels=["truck"],
+                objects=self._objs(("truck", "gray", "medium")), counts={"truck": 1},
+                detection_confidence=0.8,
+            ),
+            IndexEntry(
+                id="decoupled", timestamp=2.0, source_clip="c", thumbnail_path="t2",
+                embedding=vec, labels=["car", "truck"],
+                objects=self._objs(("car", "gray", "small"), ("truck", "purple", "medium")),
+                counts={"car": 1, "truck": 1},
+                detection_confidence=0.8,
+            ),
+        ]
+        ie._save_entries(entries)
+
+        qe = QueryEngine(index_engine=ie, storage_root=tmp_path)
+        results = qe.query("gray truck", top_k=2, generate_clips=False)
+        assert results[0].entry.id == "truepair"
+        assert results[1].entry.id == "decoupled"
+        bd = results[1].score_breakdown
+        assert bd["structure"] == 0.5  # one attribute type covered per object
+        assert bd["color_match"] == 0.0  # best object (purple truck) is not gray
+
+    def test_exact_pair_ranks_first(self, tmp_path):
+        """Orange car query: frame with an orange car beats frame with orange truck + gray car."""
+        from unkillable.index.models import IndexEntry
+        from unkillable.query.engine import QueryEngine
+        from unkillable.semantic.search import SemanticSearch
+
+        ie = self._entry_path(tmp_path)
+        ss = SemanticSearch(db_path=tmp_path / "index" / "entries.jsonl")
+        vec = ss.embed_text("orange car")
+        entries = [
+            IndexEntry(
+                id="orangecar", timestamp=1.0, source_clip="c", thumbnail_path="t1",
+                embedding=vec, labels=["car"],
+                objects=self._objs(("car", "orange", "medium")), counts={"car": 1},
+                detection_confidence=0.8,
+            ),
+            IndexEntry(
+                id="orancetruck", timestamp=2.0, source_clip="c", thumbnail_path="t2",
+                embedding=vec, labels=["car", "truck"],
+                objects=self._objs(("truck", "orange", "large"), ("car", "gray", "small")),
+                counts={"car": 1, "truck": 1},
+                detection_confidence=0.8,
+            ),
+        ]
+        ie._save_entries(entries)
+
+        qe = QueryEngine(index_engine=ie, storage_root=tmp_path)
+        results = qe.query("orange car", top_k=2, generate_clips=False)
+        assert results[0].entry.id == "orangecar"
+        assert results[1].score_breakdown["structure"] == 0.5
+
+    def test_dominance_boost(self, tmp_path):
+        """For label-only 'car', a frame with more matching objects ranks higher."""
+        from unkillable.index.models import IndexEntry
+        from unkillable.query.engine import QueryEngine
+        from unkillable.semantic.search import SemanticSearch
+
+        ie = self._entry_path(tmp_path)
+        ss = SemanticSearch(db_path=tmp_path / "index" / "entries.jsonl")
+        vec = ss.embed_text("car")
+        entries = [
+            IndexEntry(
+                id="onecar", timestamp=1.0, source_clip="c", thumbnail_path="t1",
+                embedding=vec, labels=["car"],
+                objects=self._objs(("car", "blue", "small")), counts={"car": 1},
+                detection_confidence=0.8,
+            ),
+            IndexEntry(
+                id="threecars", timestamp=2.0, source_clip="c", thumbnail_path="t2",
+                embedding=vec, labels=["car", "car", "car"],
+                objects=self._objs(("car", "blue", "small"), ("car", "gray", "small"),
+                                   ("car", "gray", "small")),
+                counts={"car": 3},
+                detection_confidence=0.8,
+            ),
+        ]
+        ie._save_entries(entries)
+
+        qe = QueryEngine(index_engine=ie, storage_root=tmp_path)
+        results = qe.query("car", top_k=2, generate_clips=False)
+        assert results[0].entry.id == "threecars"
+        assert results[0].score_breakdown["dominance"] > results[1].score_breakdown["dominance"]
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # New IndexEntry fields: tags + detection_confidence end-to-end

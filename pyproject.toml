@@ -17,6 +17,7 @@ dependencies = [
   "requests>=2.31",
   "python-dotenv>=1.0",
   "flask>=3.0",
+  "sentence-transformers>=3.0",
 ]
 
 [project.optional-dependencies]

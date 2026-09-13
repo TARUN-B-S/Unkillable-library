@@ -1,3 +1,4 @@
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -156,43 +157,67 @@ class QueryEngine:
         qvec: list[float] | None,
         extra_labels: list[str] | None = None,
     ) -> tuple[QueryResult, float]:
-        """Hybrid score: structure (labels/colors/sizes) + semantics + quality."""
-        entry_colors = {o.get("color_name") for o in entry.objects if o.get("color_name")}
-        entry_sizes = {o.get("size") for o in entry.objects if o.get("size")}
+        """Hybrid score: object-coherent structure + semantics + quality.
+
+        ``structure`` is computed per detected object: an object only earns
+        credit for query attributes it satisfies *itself*.  A frame holding a
+        gray car and a purple truck therefore does NOT fully match "gray
+        truck" — no single object is both gray and a truck.
+        """
+        objects = entry.objects or []
         entry_label_set = set(entry.labels)
+        entry_colors = {o.get("color_name") for o in objects if o.get("color_name")}
+        entry_sizes = {o.get("size") for o in objects if o.get("size")}
 
         n_labels = len(parsed.labels)
         n_colors = len(parsed.colors)
         n_sizes = len(parsed.sizes)
         has_structure = n_labels or n_colors or n_sizes
 
-        label_match = (
-            len(parsed.labels & entry_label_set) / n_labels if n_labels else 1.0
-        )
-        color_match = len(parsed.colors & entry_colors) / n_colors if n_colors else 1.0
-        size_match = len(parsed.sizes & entry_sizes) / n_sizes if n_sizes else 1.0
-
         semantic = cosine(qvec, entry.embedding) if qvec and entry.embedding else 0.0
         quality = entry.detection_confidence
 
         if has_structure:
-            # Structure should dominate when the user names attributes, but
-            # semantics + quality still break ties between matches.
+            structure, best_obj = self._object_cooccurrence(entry, parsed)
+            dominance = self._dominance(objects, parsed)
             score = (
-                0.40 * label_match
-                + 0.25 * color_match
-                + 0.10 * size_match
-                + 0.15 * semantic
-                + 0.10 * quality
+                0.50 * structure
+                + 0.10 * dominance
+                + 0.25 * semantic
+                + 0.15 * quality
             )
         else:
             # Free-form query: rely on semantic similarity + detection quality.
+            structure, best_obj, dominance = 0.0, None, 0.0
             score = 0.80 * semantic + 0.20 * quality
 
         if extra_labels and not (set(extra_labels) & entry_label_set):
             score *= 0.20  # penalize but don't eliminate
 
         score = max(0.0, min(1.0, score))
+
+        # Perception chips are re-derived from the best-matching object so the
+        # displayed breakdown always agrees with the ranking.
+        label_match = color_match = size_match = 0.0
+        if best_obj is not None:
+            if n_labels:
+                label_match = sum(1 for lbl in parsed.labels if best_obj.get("label") == lbl) / n_labels
+            else:
+                label_match = 1.0
+            if n_colors:
+                color_match = sum(1 for c in parsed.colors if best_obj.get("color_name") == c) / n_colors
+            else:
+                color_match = 1.0
+            if n_sizes:
+                size_match = sum(1 for s in parsed.sizes if best_obj.get("size") == s) / n_sizes
+            else:
+                size_match = 1.0
+        elif has_structure:
+            # No objects at all: fall back to frame-wide coverage so frames
+            # without stored detections still surface next to real matches.
+            label_match = len(parsed.labels & entry_label_set) / n_labels if n_labels else 1.0
+            color_match = len(parsed.colors & entry_colors) / n_colors if n_colors else 1.0
+            size_match = len(parsed.sizes & entry_sizes) / n_sizes if n_sizes else 1.0
 
         result = QueryResult(
             entry=entry,
@@ -204,11 +229,65 @@ class QueryEngine:
                 "label_match": round(label_match, 4),
                 "color_match": round(color_match, 4),
                 "size_match": round(size_match, 4),
+                "structure": round(structure, 4),
+                "dominance": round(dominance, 4),
                 "semantic": round(semantic, 4),
                 "quality": round(quality, 4),
             },
         )
         return result, score
+
+    @staticmethod
+    def _object_cooccurrence(
+        entry: IndexEntry, parsed: ParsedQuery
+    ) -> tuple[float, dict | None]:
+        """Return (structure, best_object) — best-object attribute coverage.
+
+        ``structure`` = (types of queried attribute the best object satisfies)
+        / (number of queried attribute types), so a "gray truck" query needs
+        one object that is both gray and a truck to reach 1.0.
+        """
+        if not parsed.labels and not parsed.colors and not parsed.sizes:
+            return 0.0, None
+        n_types = sum(bool(s) for s in (parsed.labels, parsed.colors, parsed.sizes))
+        best_credit, best_obj, best_label_hits = 0.0, None, 0
+        for obj in entry.objects or []:
+            covered = 0
+            label_hit = bool(parsed.labels) and obj.get("label") in parsed.labels
+            if label_hit:
+                covered += 1
+            if parsed.colors and obj.get("color_name") in parsed.colors:
+                covered += 1
+            if parsed.sizes and obj.get("size") in parsed.sizes:
+                covered += 1
+            if n_types and covered > 0:
+                credit = covered / n_types
+                if credit > best_credit or (
+                    credit == best_credit and label_hit and not best_label_hits
+                ):
+                    best_credit, best_obj, best_label_hits = credit, obj, int(label_hit)
+        return best_credit, best_obj
+
+    @staticmethod
+    def _dominance(objects: list[dict], parsed: ParsedQuery) -> float:
+        """Smooth boost for frames where matching objects dominate the frame."""
+        if not objects:
+            return 0.0
+        n_types = sum(bool(s) for s in (parsed.labels, parsed.colors, parsed.sizes))
+        relevant = 0
+        for obj in objects:
+            covered = 0
+            if parsed.labels and obj.get("label") in parsed.labels:
+                covered += 1
+            if parsed.colors and obj.get("color_name") in parsed.colors:
+                covered += 1
+            if parsed.sizes and obj.get("size") in parsed.sizes:
+                covered += 1
+            if n_types and covered >= n_types:
+                relevant += 1
+        if not relevant:
+            return 0.0
+        return math.log1p(relevant) / math.log1p(len(objects) + 1)
 
     def query_by_labels(
         self, labels: list[str], top_k: int = 10

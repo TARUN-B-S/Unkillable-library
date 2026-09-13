@@ -1,4 +1,8 @@
+import os
+
 import pytest
+
+os.environ.setdefault("UNKILLABLE_EMBEDDING_MODE", "hash")
 
 
 @pytest.fixture(autouse=True)
