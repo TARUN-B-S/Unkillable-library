@@ -42,12 +42,12 @@ are **demonstrative stubs or optional** — each is labeled below. Read the stat
   contains exactly one QR per chunk (`qr_backup.py` only loops over the real chunks). Restore
   will *tolerate* up to 30% missing chunks before erroring, but since there is no second copy
   on paper, losing a page means losing that data for real.
-- **RTSP record-on-motion is Frigate's behavior, and the test feed is synthetic.** With
-  `record.retain.mode: motion`, Frigate only writes recordings when it detects motion. The
-  bundled stream is a looped `testsrc` test pattern: it changes every frame, so Frigate may
-  fire a handful of noisy events or none at all, depending on the motion threshold (30). It is
-  **not** a real camera — do not expect clean person/car events. Point Frigate at a real RTSP
-  camera for realistic motion recording.
+- **RTSP record-on-motion is Frigate's behavior, and the default feed is an external webcam.**
+  With `record.retain.mode: motion`, Frigate only writes recordings when it detects motion.
+  The default live feed is the **Panama Hummingbird Feeder Cam** (Cornell), a fixed camera with
+  sparse motion — great for genuine motion events, but don't expect continuous footage. If you
+  need a looped synthetic pattern instead, `scripts/generate_test_stream.sh` still provides the
+  old `testsrc` loop.
 - **System dependencies.** Two things are not covered by `requirements.txt` alone:
   - host `ffmpeg` (+ `ffprobe`) for the `motion`/`thumbnail` CLI and the test-stream script;
   - system `libzbar0` (`sudo apt install libzbar0`) for `restore`. Without it, restore fails
@@ -109,28 +109,36 @@ docker compose up -d
 docker compose ps
 ```
 
-Expected result — three containers all `running`:
+Expected result — containers up (the `stream-bridge` 511NY service is now opt-in via the
+`busy-511ny` profile and does not start here):
 
 | Service | Container | Ports | Role |
 |---|---|---|---|
 | `frigate` | `frigate` | 5000 (UI), 8555 | NVR: motion recording + detection |
-| `mediamtx` | `mediamtx` | 8554 (RTSP), 8888 (API) | RTSP server for the test camera |
-| `ollama` | `ollama` | 11434 | Local vision LLM (optional, see `describe`) |
+| `mediamtx` | `mediamtx` | 8554 (RTSP), 8888 (API) | RTSP server for the live camera |
+| `monitor` | `monitor` | 8080 | Dashboard |
 
 First run pulls `ghcr.io/blakeblackshear/frigate:stable`, `bluenviron/mediamtx:latest`, and
 `ollama/ollama:latest` — this can take several minutes.
 
-## 3. Feed the bundled test RTSP stream
+## 3. Feed the live webcam RTSP stream
 
-In a **second terminal** (the script streams forever, in the foreground):
+In a **second terminal** (the bridge streams forever, in the foreground):
+
+```bash
+./scripts/bridge_live_stream.sh
+```
+
+What it does: resolves the default preset (**Panama Hummingbird Feeder Cam**, a Cornell Lab
+live 1080p30 YouTube broadcast) via `yt-dlp`, then remuxes it to `rtsp://localhost:8554/test`
+with `ffmpeg`. On a stream drop it re-resolves the short-lived HLS manifest and reconnects.
+It requires host `ffmpeg` and `yt-dlp`. See `Live_Bridge.md` for presets and probes.
+
+Offline fallback (synthetic `testsrc` loop, old behavior):
 
 ```bash
 ./scripts/generate_test_stream.sh
 ```
-
-What it does: creates `storage/testsrc.mp4` (10 s of `testsrc` + tone) on first run, then loops
-it to `rtsp://localhost:8554/test`. It requires host `ffmpeg` and exits with an error if not
-found. Leave it running for the rest of the demo.
 
 Verify the stream is live (two quick checks):
 
@@ -139,16 +147,17 @@ ffprobe -v error -show_entries stream=codec_name,width,height -of csv=p=0 rtsp:/
 curl -s http://localhost:8888/v3/paths/list | python3 -m json.tool | grep -A3 '"test"'
 ```
 
-Expected: `h264,1280,720` from ffprobe, and MediaMTX's path API reporting `"test"` with
+Expected: `h264,1920,1080` from ffprobe, and MediaMTX's path API reporting `"test"` with
 `"ready": true` (or `publishers: 1`).
 
 ## 4. Verify Frigate
 
 Open **http://localhost:5000** in a browser.
 
-- The **LIVE** page should show the `test_camera` receiving the looped testsrc pattern
+- The **LIVE** page should show the `test_camera` receiving the live hummingbird cam
   (read via `rtsp://mediamtx:8554/test`, per `config/config.yml`).
-- The **Events** page will be empty or sparse — see the RTSP record-on-motion limitation.
+- The **Events** page will be empty or sparse — motion here is real but sparse (see the
+  RTSP record-on-motion limitation).
 - Watch Frigate attach to the stream:
   ```bash
   docker compose logs -f frigate
@@ -184,10 +193,13 @@ Motion events: <N>
   score=0.xxx ts=...
   ...
 ```
-`N` is usually several (the testsrc pattern changes every frame). This uses FFmpeg's
+`N` is usually several (a live cam with motion — e.g., a hummingbird flying through — or the
+`testsrc` fallback pattern changes frames). This uses FFmpeg's
 `select='gt(scene,0.02)'` scene filter. If host ffmpeg were missing, you'd instead see one
 simulated event (`score=0.500`) from the `_dummy_motion` fallback — that fallback is a
 **demonstrative stub**.
+With the default live cam, expect **0** events during still stretches and a burst when motion
+occurs — that's the cadence we want. The `--probe` flag on `bridge_live_stream.sh` measures it.
 
 Also works against a local file: `python -m unkillable.cli motion storage/testsrc.mp4 --duration 5`.
 
@@ -392,9 +404,9 @@ That's the expected symptom — install `libzbar0` (prerequisites) and retry.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `motion` prints one `score=0.500` event | Host `ffmpeg` missing → dummy fallback | `apt install ffmpeg`; re-run |
-| `generate_test_stream.sh` says "ffmpeg not found" | No host ffmpeg | Install ffmpeg; script cannot run in Docker |
-| Frigate LIVE shows no camera / black view | RTSP publisher not publishing | Confirm terminal 2 is running `generate_test_stream.sh`; check `curl http://localhost:8888/v3/paths/list` |
-| No Frigate recordings | `mode: motion` + testsrc may not trip the motion threshold (threshold 30) | Crank `motion.threshold` down (to e.g. 15) in `config/config.yml`, `docker compose restart frigate`; or use a real camera |
+| `generate_test_stream.sh` / `bridge_live_stream.sh` says "ffmpeg not found" | No host ffmpeg | Install ffmpeg; the bridge also needs `pip install yt-dlp` for YouTube presets |
+| Frigate LIVE shows no camera / black view | RTSP publisher not publishing | Confirm terminal 2 is running `bridge_live_stream.sh`; check `curl http://localhost:8888/v3/paths/list` |
+| No Frigate recordings | `mode: motion` + a sparse live cam (e.g. still stretches) | Wait for motion (hummingbird visits), crank `motion.threshold` down (to e.g. 15) in `config/config.yml`, `docker compose restart frigate`; or use the `testsrc` loop to force motion |
 | `describe` fails with "Ollama error: ... not found" | Model not pulled | `docker exec ollama ollama pull qwen3-vl:8b-instruct` |
 | `describe` returns the canned fallback sentence | Ollama unreachable | `docker compose ps` — is `ollama` running? |
 | `detect` always says `Detections: 0` | `ultralytics` not installed | `pip install ultralytics` (optional) |
@@ -408,8 +420,8 @@ That's the expected symptom — install `libzbar0` (prerequisites) and retry.
 Stop the demo cleanly (keep your data):
 
 ```bash
-# 1. Stop the test stream in its terminal (Ctrl+C), or from another terminal:
-pkill -f generate_test_stream.sh
+# 1. Stop the stream in its terminal (Ctrl+C), or from another terminal:
+pkill -f bridge_live_stream.sh
 
 # 2. Stop the Docker stack (containers stop; storage/ and ollama_data volume persist):
 docker compose down
@@ -433,8 +445,10 @@ find storage -type d -empty -delete
 
 - Real semantic search (semantic meaning over thumbnails) — requires `sentence-transformers` and
   a populated embedding index; Frigate's own `semantic_search.jinav1` config is **not** exercised.
-- Real object-detection events through Frigate with clips/snapshots — requires a real RTSP
-  camera; the testsrc feed may not reliably trigger motion.
+- Real object-detection events through Frigate with clips/snapshots (people/cars) — the default
+  live cam is a hummingbird feeder; motion bursts are real but brief, and object detection is
+  still YOLO-optional. For higher-value detections, probe a street/person preset:
+  `./scripts/bridge_live_stream.sh --probe all`.
 - GenAI descriptions wired through Frigate events — config exists (`genai`), but only the CLI
   `describe` command is demonstrable, and only after pulling the model.
 - Redundant paper backup — the redundant QR set is logged but never printed.

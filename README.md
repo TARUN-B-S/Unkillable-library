@@ -9,10 +9,13 @@ Local-only NVR: motion-only recording, AI object detection, semantic search, pap
 source .venv/bin/activate
 unkillable --help
 docker compose up -d
-./scripts/generate_test_stream.sh
+./scripts/bridge_live_stream.sh   # live Panama Hummingbird cam -> RTSP
 ```
 
 Open http://localhost:5000
+
+No internet? Use the offline fallback instead: `./scripts/generate_test_stream.sh`
+(synthetic `testsrc` loop). See `Live_Bridge.md` for the full preset catalog.
 
 ## CLI
 
@@ -40,7 +43,8 @@ unkillable-library/
 │   └── utils/             # FFmpeg wrapper, storage, logging
 ├── config/config.yml      # Frigate config (CPU, motion, 30d retain)
 ├── config/mediamtx.yml    # RTSP server for test stream
-├── docker-compose.yml     # Frigate + MediaMTX + Ollama
+├── docker-compose.yml     # Frigate + MediaMTX (+ opt-in 511NY bridge profile)
+├── Live_Bridge.md         # Curated live webcam feeds (panama-hummer default)
 ├── storage/               # Clips, thumbnails, embeddings
 └── report.md / OPINIONS.md
 ```

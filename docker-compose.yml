@@ -12,6 +12,10 @@ services:
   stream-bridge:
     image: jrottenberg/ffmpeg:6.1-ubuntu
     restart: unless-stopped
+    # Opt-in ("busy" tier): NY-DOT live highway cam into the same "test" RTSP path.
+    # The default demo feed is the host-run scripts/bridge_live_stream.sh
+    # (Panama Hummingbird Feeder Cam) so it is NOT started by `docker compose up -d`.
+    profiles: ["busy-511ny"]
     depends_on:
       - mediamtx
     entrypoint: ["/bin/bash"]
