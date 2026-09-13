@@ -59,6 +59,45 @@ def frigate_events(wait_for_services):
     return r.json()
 
 
+@pytest.fixture(scope="module")
+def frigate_ready_event(frigate_events):
+    """First recent event whose clip file is actually written and non-empty.
+
+    Frigate flips has_clip before the segment is flushed, so immediately
+    after a Frigate restart the newest event can serve an empty clip.
+    """
+    for event in frigate_events:
+        try:
+            r = requests.get(
+                f"{BASE_URL}/frigate/api/events/{event['id']}/clip.mp4",
+                params={"download": "0"},
+                timeout=5,
+            )
+        except requests.ConnectionError:
+            continue
+        if r.status_code == 200 and len(r.content) > 1000:
+            return event
+    pytest.skip("No Frigate event with a non-empty clip yet")
+
+
+@pytest.fixture(scope="module")
+def frigate_ready_snapshot(frigate_events):
+    """First recent event whose snapshot is actually served (flushed)."""
+    for event in frigate_events:
+        if not event.get("has_snapshot"):
+            continue
+        try:
+            r = requests.get(
+                f"{BASE_URL}/frigate/api/events/{event['id']}/snapshot.jpg",
+                timeout=5,
+            )
+        except requests.ConnectionError:
+            continue
+        if r.status_code == 200 and "image" in r.headers.get("content-type", ""):
+            return event
+    pytest.skip("No Frigate event with a flushed snapshot yet")
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Dashboard Tests
 # ═══════════════════════════════════════════════════════════════════════
@@ -199,10 +238,8 @@ class TestClipAccess:
         # Should be video/mp4 or similar
         assert "video" in ct or "octet-stream" in ct or "mp4" in ct
 
-    def test_clip_returns_data(self, frigate_events):
-        if not frigate_events:
-            pytest.skip("No events yet")
-        event_id = frigate_events[0]["id"]
+    def test_clip_returns_data(self, frigate_ready_event):
+        event_id = frigate_ready_event["id"]
         r = requests.get(
             f"{BASE_URL}/frigate/api/events/{event_id}/clip.mp4",
             timeout=10,
@@ -215,12 +252,8 @@ class TestClipAccess:
 # ═══════════════════════════════════════════════════════════════════════
 
 class TestSnapshot:
-    def test_event_has_snapshot(self, frigate_events):
-        if not frigate_events:
-            pytest.skip("No events yet")
-        event = frigate_events[0]
-        if not event.get("has_snapshot"):
-            pytest.skip("Event has no snapshot")
+    def test_event_has_snapshot(self, frigate_ready_snapshot):
+        event = frigate_ready_snapshot
         r = requests.get(
             f"{BASE_URL}/frigate/api/events/{event['id']}/snapshot.jpg",
             timeout=10,

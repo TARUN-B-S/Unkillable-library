@@ -3,15 +3,11 @@
 Tests run against generated ffmpeg commands (string assertions) and
 internal logic — no real media files needed.
 """
-import hashlib
-import json
 import math
-import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # Storage
@@ -214,7 +210,7 @@ class TestDetector:
         assert results == []
 
     def test_filter_by_label(self):
-        from unkillable.detection.detector import Detector, Detection
+        from unkillable.detection.detector import Detection, Detector
         d = Detector(track_labels=["person", "car"])
         detections = [
             Detection(label="person", confidence=0.9, bbox=(0, 0, 100, 100)),
@@ -226,7 +222,7 @@ class TestDetector:
         assert {f.label for f in filtered} == {"person", "car"}
 
     def test_filter_by_threshold(self):
-        from unkillable.detection.detector import Detector, Detection
+        from unkillable.detection.detector import Detection, Detector
         d = Detector(track_labels=["person"], threshold=0.8)
         detections = [
             Detection(label="person", confidence=0.9, bbox=(0, 0, 100, 100)),
@@ -237,7 +233,7 @@ class TestDetector:
         assert filtered[0].confidence == 0.9
 
     def test_counts(self):
-        from unkillable.detection.detector import Detector, Detection
+        from unkillable.detection.detector import Detection, Detector
         detections = [
             Detection(label="person", confidence=0.9, bbox=(0, 0, 10, 10)),
             Detection(label="person", confidence=0.7, bbox=(0, 0, 10, 10)),
@@ -416,13 +412,13 @@ class TestFFmpegWrapper:
         assert not fw.is_available()
 
     def test_run_raises_on_missing_binary(self):
-        from unkillable.utils.ffmpeg import FFmpegWrapper, FFmpegError
+        from unkillable.utils.ffmpeg import FFmpegError, FFmpegWrapper
         fw = FFmpegWrapper(binary="/nonexistent/ffmpeg")
         with pytest.raises(FFmpegError):
             fw.run(["-version"])
 
     def test_run_raises_on_nonzero_exit(self):
-        from unkillable.utils.ffmpeg import FFmpegWrapper, FFmpegError
+        from unkillable.utils.ffmpeg import FFmpegError, FFmpegWrapper
         fw = FFmpegWrapper(binary="/bin/sh")
         with pytest.raises(FFmpegError):
             fw.run(["-c", "exit 1"])
@@ -460,6 +456,7 @@ class TestDescriber:
 class TestCLI:
     def test_cli_help(self):
         from typer.testing import CliRunner
+
         from unkillable.cli import app
         runner = CliRunner()
         result = runner.invoke(app, ["--help"])
@@ -468,6 +465,7 @@ class TestCLI:
 
     def test_storage_info_command(self, tmp_path):
         from typer.testing import CliRunner
+
         from unkillable.cli import app
         runner = CliRunner()
         storage = tmp_path / "storage"
@@ -480,6 +478,7 @@ class TestCLI:
 
     def test_index_command_help(self):
         from typer.testing import CliRunner
+
         from unkillable.cli import app
         runner = CliRunner()
         result = runner.invoke(app, ["index", "--help"])
@@ -488,6 +487,7 @@ class TestCLI:
 
     def test_query_command_help(self):
         from typer.testing import CliRunner
+
         from unkillable.cli import app
         runner = CliRunner()
         result = runner.invoke(app, ["query", "--help"])
@@ -496,6 +496,7 @@ class TestCLI:
 
     def test_serve_command_help(self):
         from typer.testing import CliRunner
+
         from unkillable.cli import app
         runner = CliRunner()
         result = runner.invoke(app, ["serve", "--help"])
