@@ -230,13 +230,39 @@ semantic_search:
 
 **Important:** This runs 100% on your hardware. No data is sent anywhere. The Jina model is downloaded once and runs offline.
 
+**Ranking internals (for the curious):**
+
+Each indexed frame carries **two vectors**: an image embedding (CLIP) and a text
+embedding of its tags/labels (plus the AI description once generated). A query
+is scored by cosine similarity against both, keeping the higher of the two.
+Queries that name concrete attributes ("red truck", "two cars") are additionally
+parsed into structure (label/color/size) that must be satisfied by a *single*
+detected object, not spread across the frame.
+
+The final ranking uses **reciprocal-rank fusion (RRF)**: instead of blending
+scores with fixed weights, each signal (structure, semantics, dominance,
+detection quality) contributes `1/(60 + rank)` per frame. A frame ranked high on
+any signal gets boosted, and no single hand-tuned weight dominates. Ties share
+an average rank so list order can't bias results.
+
+Performance notes: embeddings are computed in batches during indexing, parsed
+entries and vectors are cached in memory (invalidated by file mtime), and
+queries are a single NumPy matrix product — a 5,000-frame index answers in
+tens of milliseconds.
+
+**Feedback loop:** In the dashboard, mark a result 👍 relevant or 👎 not
+relevant (`POST /api/feedback`). A down-vote halves the frame's text-vector
+magnitude so similar tag/description matches rank lower over time. AI
+descriptions (`POST /api/describe/<id>`) are persisted and immediately
+searchable via the text vector.
+
 ---
 
 ### Part 4: AI-Generated Descriptions
 
 **The Problem:** Semantic search on thumbnails works for visual similarity, but doesn't understand *what's happening*.
 
-**The Solution:** Frigate sends object thumbnails to a local LLM (via Ollama) to generate text descriptions.
+**The Solution:** Frigate sends object thumbnails to an LLM (via Ollama) to generate text descriptions.
 
 ```
 Thumbnail: [person walking toward door]
@@ -254,7 +280,7 @@ Now you can search by DESCRIPTION, not just image
 genai:
   provider: ollama
   base_url: http://localhost:11434
-  model: qwen3-vl:8b-instruct   # Local vision-language model
+  model: gemma4:31b-cloud   # Ollama-hosted cloud vision-language model
 ```
 
 **This means you can search:**

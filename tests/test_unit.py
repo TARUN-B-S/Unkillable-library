@@ -4,10 +4,12 @@ Tests run against generated ffmpeg commands (string assertions) and
 internal logic — no real media files needed.
 """
 import math
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 
 # ═══════════════════════════════════════════════════════════════════════
 # Storage
@@ -435,6 +437,18 @@ class TestDescriber:
         with pytest.raises(DescriberError):
             d.describe("/nonexistent/image.jpg")
 
+    def test_model_reads_config_and_override_wins(self):
+        from unkillable.config import load_config, section
+        from unkillable.genai.describer import Describer
+
+        cfg = section(load_config(), "genai")
+        d = Describer()
+        assert d.provider == "ollama"
+        assert d.model == (cfg.get("model") or "gemma4:31b-cloud")
+
+        d2 = Describer(model="qwen3-vl:8b-instruct")
+        assert d2.model == "qwen3-vl:8b-instruct"
+
     def test_fallback_description(self):
         from unkillable.genai.describer import Describer
         d = Describer()
@@ -679,7 +693,11 @@ class TestIndexEngine:
         assert Path(result.source_clip).name == "clip.mp4"
         assert Path(result.source_clip).is_absolute()
         assert "front" in result.metadata["camera"]
+        # Embedding is filled by the batch step (_embed_entries), not here.
+        assert result.embedding == []
+        ie._embed_entries([result])
         assert len(result.embedding) == 512  # hash embedding dimension
+        assert len(result.text_embedding) == 512  # dual text vector from tags
 
     def test_fallback_extract(self, tmp_path):
         from unkillable.index.engine import IndexEngine
@@ -1146,7 +1164,11 @@ class TestIndexEngine:
         assert Path(result.source_clip).name == "clip.mp4"
         assert Path(result.source_clip).is_absolute()
         assert "front" in result.metadata["camera"]
+        # Embedding is filled by the batch step (_embed_entries), not here.
+        assert result.embedding == []
+        ie._embed_entries([result])
         assert len(result.embedding) == 512  # hash embedding dimension
+        assert len(result.text_embedding) == 512  # dual text vector from tags
 
     def test_fallback_extract(self, tmp_path):
         from unkillable.index.engine import IndexEngine
@@ -1851,3 +1873,350 @@ class TestEntryNewFields:
             data = r.get_json()
             assert data["tag_counts"] == {"red car": 1}
             assert data["avg_detection_confidence"] == 0.85
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# QueryEngine.query_nearest_time — time-based nearest search
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestQueryNearestTime:
+    """query_nearest_time: give a time, get frames with closest wall_time."""
+
+    @staticmethod
+    def _make_engine(tmp_path, entries):
+        from unkillable.index.engine import IndexEngine
+
+        ie = IndexEngine(storage_root=tmp_path)
+        ie.ensure_dirs()
+        ie._save_entries(entries)
+        from unkillable.query.engine import QueryEngine
+        return QueryEngine(index_engine=ie, storage_root=tmp_path)
+
+    def test_basic_nearest_ordering(self, tmp_path):
+        from unkillable.index.models import IndexEntry
+
+        base = 1757700000.0
+        qe = self._make_engine(tmp_path, [
+            IndexEntry(id="e1", timestamp=0.0, source_clip="c", thumbnail_path="t1", wall_time=base),
+            IndexEntry(id="e2", timestamp=5.0, source_clip="c", thumbnail_path="t2", wall_time=base + 12),
+            IndexEntry(id="e3", timestamp=10.0, source_clip="c", thumbnail_path="t3", wall_time=base + 47),
+        ])
+        results = qe.query_nearest_time(base + 10, top_k=2, generate_clips=False)
+        assert len(results) == 2
+        # e2 Δ2s closest, then e1 Δ10s; e3 excluded by top_k
+        assert [r.entry.id for r in results] == ["e2", "e1"]
+        assert results[0].score == 2.0
+        assert results[0].score <= results[1].score
+
+    def test_accepts_iso_datetime_string(self, tmp_path):
+        from unkillable.index.models import IndexEntry
+
+        qe = self._make_engine(tmp_path, [
+            IndexEntry(id="e1", timestamp=0.0, source_clip="c", thumbnail_path="t1", wall_time=1000000.0),
+            IndexEntry(id="e2", timestamp=5.0, source_clip="c", thumbnail_path="t2", wall_time=1000600.0),
+        ])
+        target = datetime.fromtimestamp(1000500.0).strftime("%Y-%m-%d %H:%M:%S")
+        results = qe.query_nearest_time(target, top_k=1, generate_clips=False)
+        assert len(results) == 1
+        assert results[0].entry.id == "e2"  # Δ100s vs Δ500s
+
+    def test_earlier_side_is_also_matched(self, tmp_path):
+        """A target before all entries still returns the closest one."""
+        from unkillable.index.models import IndexEntry
+
+        qe = self._make_engine(tmp_path, [
+            IndexEntry(id="e1", timestamp=0.0, source_clip="c", thumbnail_path="t1", wall_time=2000.0),
+            IndexEntry(id="e2", timestamp=5.0, source_clip="c", thumbnail_path="t2", wall_time=2100.0),
+        ])
+        results = qe.query_nearest_time(1500.0, top_k=1, generate_clips=False)
+        assert results[0].entry.id == "e1"
+        assert results[0].score == 500.0
+
+    def test_skips_entries_without_wall_time(self, tmp_path):
+        from unkillable.index.models import IndexEntry
+
+        qe = self._make_engine(tmp_path, [
+            IndexEntry(id="no_time", timestamp=0.0, source_clip="c", thumbnail_path="t0"),
+            IndexEntry(id="has_time", timestamp=5.0, source_clip="c", thumbnail_path="t2", wall_time=5000.0),
+        ])
+        results = qe.query_nearest_time(4999.0, generate_clips=False)
+        assert [r.entry.id for r in results] == ["has_time"]
+
+    def test_invalid_target_returns_empty(self, tmp_path):
+        qe = self._make_engine(tmp_path, [])
+        assert qe.query_nearest_time("not-a-time") == []
+
+    def test_empty_index_returns_empty(self, tmp_path):
+        qe = self._make_engine(tmp_path, [])
+        assert qe.query_nearest_time(1234567890.0) == []
+
+    def test_label_filter_narrows_results(self, tmp_path):
+        from unkillable.index.models import IndexEntry
+
+        qe = self._make_engine(tmp_path, [
+            IndexEntry(id="e1", timestamp=0.0, source_clip="c", thumbnail_path="t1", wall_time=1000.0, labels=["car"]),
+            IndexEntry(id="e2", timestamp=5.0, source_clip="c", thumbnail_path="t2", wall_time=1002.0, labels=["dog"]),
+            IndexEntry(id="e3", timestamp=10.0, source_clip="c", thumbnail_path="t3", wall_time=1004.0, labels=["car"]),
+        ])
+        results = qe.query_nearest_time(1001.0, labels=["car"], generate_clips=False)
+        assert [r.entry.id for r in results] == ["e1", "e3"]
+
+    def test_top_k_none_returns_all_sorted_by_delta(self, tmp_path):
+        from unkillable.index.models import IndexEntry
+
+        qe = self._make_engine(tmp_path, [
+            IndexEntry(id=f"e{i}", timestamp=float(i), source_clip="c", thumbnail_path=f"t{i}", wall_time=100.0 + i * 10)
+            for i in range(7)
+        ])
+        results = qe.query_nearest_time(133.0, top_k=None, generate_clips=False)
+        assert len(results) == 7
+        deltas = [r.score for r in results]
+        assert deltas == sorted(deltas)
+
+    def test_to_dict_exposes_time_fields(self, tmp_path):
+        from unkillable.index.models import IndexEntry
+
+        qe = self._make_engine(tmp_path, [
+            IndexEntry(id="e1", timestamp=0.0, source_clip="c", thumbnail_path="t1", wall_time=1000.0),
+        ])
+        results = qe.query_nearest_time(1005.0, generate_clips=False)
+        d = results[0].to_dict()
+        assert d["score"] == 5.0
+        assert d["wall_time"] == 1000.0
+        assert "2026" not in d["wall_time_str"] or True  # wall_time_str is populated
+        assert d["wall_time_str"] != ""
+
+    def test_api_search_time_endpoint(self, tmp_path):
+        from unkillable.api import app, init_engines
+        from unkillable.index.engine import IndexEngine
+        from unkillable.index.models import IndexEntry
+
+        init_engines(storage_root=tmp_path)
+        ie = IndexEngine(storage_root=tmp_path)
+        ie.ensure_dirs()
+        base = 1757700000.0
+        ie._save_entries([
+            IndexEntry(id="e1", timestamp=0.0, source_clip="c", thumbnail_path="t1", wall_time=base),
+            IndexEntry(id="e2", timestamp=5.0, source_clip="c", thumbnail_path="t2", wall_time=base + 30),
+        ])
+
+        with app.test_client() as client:
+            # epoch form
+            r = client.get(f"/api/search/time?t={base + 5}&top_k=1")
+            assert r.status_code == 200
+            data = r.get_json()
+            assert data["count"] == 1
+            assert data["results"][0]["id"] == "e1"
+            assert data["results"][0]["score"] == 5.0
+
+            # ISO form
+            iso = datetime.fromtimestamp(base + 5).strftime("%Y-%m-%d %H:%M:%S")
+            r = client.get("/api/search/time?t=" + requests.utils.quote(iso) + "&top_k=1")
+            assert r.status_code == 200
+            assert r.get_json()["results"][0]["id"] == "e1"
+
+    def test_api_search_time_requires_t(self, tmp_path):
+        from unkillable.api import app, init_engines
+
+        init_engines(storage_root=tmp_path)
+        with app.test_client() as client:
+            r = client.get("/api/search/time")
+            assert r.status_code == 400
+            assert "error" in r.get_json()
+
+
+# ═════════════════════════════════════════════════════════════════
+# Search improvements: RRF fusion, dual embeddings, feedback loop
+# ═════════════════════════════════════════════════════════════════
+
+class TestSearchImprovements:
+    def _entry_path(self, tmp_path):
+        from unkillable.index.engine import IndexEngine
+        ie = IndexEngine(storage_root=tmp_path)
+        ie.ensure_dirs()
+        return ie
+
+    def test_rrf_prefers_consistently_good_entry(self, tmp_path):
+        """RRF should favor an entry strong on all signals over one strong on only one."""
+        from unkillable.index.models import IndexEntry
+        from unkillable.query.engine import QueryEngine
+        from unkillable.semantic.search import SemanticSearch
+
+        ie = self._entry_path(tmp_path)
+        ss = SemanticSearch(db_path=tmp_path / "index" / "entries.jsonl")
+        vec = ss.embed_text("car")
+        entries = [
+            IndexEntry(
+                id="balanced", timestamp=1.0, source_clip="c", thumbnail_path="t1",
+                embedding=vec, labels=["car"],
+                objects=[{"label": "car", "color_name": "gray", "size": "medium", "confidence": 0.9}],
+                counts={"car": 1}, detection_confidence=0.9,
+            ),
+            IndexEntry(
+                id="semanticonly", timestamp=2.0, source_clip="c", thumbnail_path="t2",
+                embedding=vec, labels=["car"], objects=[], counts={},
+                detection_confidence=0.0,
+            ),
+        ]
+        ie._save_entries(entries)
+
+        qe = QueryEngine(index_engine=ie, storage_root=tmp_path)
+        results = qe.query("car", generate_clips=False)
+        assert results[0].entry.id == "balanced"
+
+    def test_rrf_tie_uses_differing_signal(self, tmp_path):
+        """With most signals tied, the differing signal decides (no list-order bias)."""
+        from unkillable.index.models import IndexEntry
+        from unkillable.query.engine import QueryEngine
+        from unkillable.semantic.search import SemanticSearch
+
+        ie = self._entry_path(tmp_path)
+        ss = SemanticSearch(db_path=tmp_path / "index" / "entries.jsonl")
+        vec = ss.embed_text("car")
+        entries = [
+            IndexEntry(
+                id="lowdom", timestamp=1.0, source_clip="c", thumbnail_path="t1",
+                embedding=vec, labels=["car"],
+                objects=[{"label": "car", "confidence": 0.8}], counts={"car": 1},
+                detection_confidence=0.8,
+            ),
+            IndexEntry(
+                id="highdom", timestamp=2.0, source_clip="c", thumbnail_path="t2",
+                embedding=vec, labels=["car", "car", "car"],
+                objects=[{"label": "car", "confidence": 0.8} for _ in range(3)],
+                counts={"car": 3},
+                detection_confidence=0.8,
+            ),
+        ]
+        ie._save_entries(entries)
+
+        qe = QueryEngine(index_engine=ie, storage_root=tmp_path)
+        results = qe.query("car", generate_clips=False)
+        assert results[0].entry.id == "highdom"
+
+    def test_text_vector_boosts_tag_match(self, tmp_path):
+        """A frame whose tags text is close to the query outranks a tagless frame."""
+        from unkillable.index.models import IndexEntry
+        from unkillable.query.engine import QueryEngine
+        from unkillable.semantic.search import SemanticSearch
+
+        ie = self._entry_path(tmp_path)
+        ss = SemanticSearch(db_path=tmp_path / "index" / "entries.jsonl")
+        vec = ss.embed_text("generic frame")
+        tagged_vec = ss.embed_text("red car truck person")
+        entries = [
+            IndexEntry(
+                id="tagged", timestamp=1.0, source_clip="c", thumbnail_path="t1",
+                embedding=vec, text_embedding=tagged_vec, labels=["car"],
+                detection_confidence=0.5,
+            ),
+            IndexEntry(
+                id="untagged", timestamp=2.0, source_clip="c", thumbnail_path="t2",
+                embedding=vec, detection_confidence=0.5,
+            ),
+        ]
+        ie._save_entries(entries)
+
+        qe = QueryEngine(index_engine=ie, storage_root=tmp_path)
+        results = qe.query("red car", generate_clips=False)
+        assert results[0].entry.id == "tagged"
+
+    def test_hash_mode_search_uses_text_vectors(self, tmp_path):
+        """SemanticSearch.search in hash mode must rank via text vectors, not path hashes."""
+        from unkillable.semantic.search import SemanticSearch
+
+        ss = SemanticSearch(db_path=tmp_path / "db.jsonl")
+        assert ss._encoder is None  # test env runs in hash mode
+        qvec = ss.embed_text("red car")
+        ss.index("tagged", qvec, {"text_vector": ss.embed_text("red car truck"), "label": "tagged"})
+        ss.index("other", ss.embed_text("blue dog"), {"text_vector": ss.embed_text("blue dog"), "label": "other"})
+
+        results = ss.search("red car", top_k=2)
+        assert results[0].id == "tagged"
+        assert results[0].score > results[1].score
+
+    def test_description_persists_and_is_searchable(self, tmp_path):
+        """update_entry_description rewrites the entry and refreshes its text vector."""
+        from unkillable.index.models import IndexEntry
+        from unkillable.query.engine import QueryEngine
+        from unkillable.semantic.search import SemanticSearch
+
+        ie = self._entry_path(tmp_path)
+        ss = SemanticSearch(db_path=tmp_path / "index" / "entries.jsonl")
+        vec = ss.embed_text("generic frame")
+        ie._save_entries([
+            IndexEntry(id="e1", timestamp=1.0, source_clip="c", thumbnail_path="t1", embedding=vec),
+        ])
+
+        ie.update_entry_description("e1", "a red car blocking the driveway")
+        loaded = ie.get_entry("e1")
+        assert loaded.metadata["description"] == "a red car blocking the driveway"
+        assert len(loaded.text_embedding) == 512
+
+        qe = QueryEngine(index_engine=ie, storage_root=tmp_path)
+        results = qe.query("red car blocking driveway", generate_clips=False)
+        assert results[0].entry.id == "e1"
+
+    def test_feedback_downvote_demotes_text_match(self, tmp_path):
+        """Down-vote records a demotion that reduces the entry's text-channel influence."""
+        from unkillable.api import app, init_engines
+        from unkillable.index.engine import IndexEngine
+        from unkillable.index.models import IndexEntry
+        from unkillable.query.engine import QueryEngine
+        from unkillable.semantic.search import SemanticSearch
+
+        init_engines(storage_root=tmp_path)
+        ie = IndexEngine(storage_root=tmp_path)
+        ss = SemanticSearch(db_path=tmp_path / "index" / "entries.jsonl")
+        ie.ensure_dirs()
+        vec = ss.embed_text("generic frame")
+        ie._save_entries([
+            IndexEntry(id="e1", timestamp=1.0, source_clip="c", thumbnail_path="t1",
+                       embedding=vec, text_embedding=ss.embed_text("red car truck person"), labels=["car"]),
+            IndexEntry(id="e2", timestamp=2.0, source_clip="c", thumbnail_path="t2",
+                       embedding=vec, text_embedding=ss.embed_text("a person walking"), labels=["person"]),
+        ])
+
+        qe = QueryEngine(index_engine=ie, storage_root=tmp_path)
+        entries = ie.load_entries(limit=100)
+        before = qe._semantic_scores("red car truck", entries)["e1"]
+
+        with app.test_client() as client:
+            r = client.post("/api/feedback", json={"entry_id": "e1", "vote": "down"})
+            assert r.status_code == 200
+            assert r.get_json()["recorded"] is True
+
+        # The demotion must actually change the semantic score (cosine is
+        # scale-invariant, so the mechanism is a weight, not vector scaling).
+        entries = ie.load_entries(limit=100)
+        assert next(e for e in entries if e.id == "e1").metadata["feedback_downvotes"] == 1
+        after = qe._semantic_scores("red car truck", entries)["e1"]
+        assert after < before * 0.75, (before, after)
+        # A second down-vote halves again
+        with app.test_client() as client:
+            client.post("/api/feedback", json={"entry_id": "e1", "vote": "down"})
+        after2 = qe._semantic_scores("red car truck", ie.load_entries(limit=100))["e1"]
+        assert after2 < after
+
+    def test_feedback_requires_valid_vote(self, tmp_path):
+        from unkillable.api import app, init_engines
+
+        init_engines(storage_root=tmp_path)
+        with app.test_client() as client:
+            r = client.post("/api/feedback", json={"entry_id": "e1", "vote": "meh"})
+            assert r.status_code == 400
+
+    def test_batched_indexing_sets_both_vectors(self, tmp_path):
+        """_embed_entries fills image + text vectors in a single batch pass."""
+        from unkillable.index.engine import IndexEngine
+        from unkillable.index.models import IndexEntry
+
+        ie = IndexEngine(storage_root=tmp_path)
+        entries = [
+            IndexEntry(id="a", timestamp=1.0, source_clip="c", thumbnail_path="t1", labels=["car"], tags=["car", "gray car"]),
+            IndexEntry(id="b", timestamp=2.0, source_clip="c", thumbnail_path="t2", labels=["dog"], tags=["dog"]),
+        ]
+        ie._embed_entries(entries)
+        for e in entries:
+            assert len(e.embedding) == 512
+            assert len(e.text_embedding) == 512

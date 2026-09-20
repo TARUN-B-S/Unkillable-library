@@ -57,6 +57,11 @@
       .search-btn { padding: 12px 24px; background: #39411b; border: 1px solid #414630; color: #d8ff68; font-family: ui-monospace, monospace; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; cursor: pointer; transition: background .15s; }
       .search-btn:hover { background: #4a5528; }
       .search-filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+      .time-filters { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+      .time-label { font-family: ui-monospace, monospace; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: #777; }
+      .time-input { padding: 6px 8px; background: #1a1d17; border: 1px solid #414630; color: #f5f0e4; font-family: ui-monospace, monospace; font-size: 12px; }
+      .time-input:focus { border-color: #d8ff68; outline: none; }
+      .time-active { border-color: #d8ff68; }
       .filter-chip { padding: 4px 12px; border: 1px solid #414630; background: #1a1d17; color: #777; font-family: ui-monospace, monospace; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; cursor: pointer; transition: all .15s; }
       .filter-chip:hover { color: #bbc09d; border-color: #555; }
       .filter-chip.active { color: #d8ff68; border-color: #d8ff68; background: #252a1d; }
@@ -143,6 +148,15 @@
         <input type="text" class="search-input" id="search-input" placeholder="Search video… e.g. 'red car', 'person walking', 'dog crossing'" autofocus>
         <button class="search-btn" id="search-btn">Search</button>
       </div>
+      <div class="time-filters" id="time-filters">
+        <span class="time-label">From</span>
+        <input type="date" class="time-input" id="from-date">
+        <input type="time" class="time-input" id="from-time">
+        <span class="time-label">To</span>
+        <input type="date" class="time-input" id="to-date">
+        <input type="time" class="time-input" id="to-time">
+        <button class="btn" id="time-clear-btn"><span class="icon">×</span> Clear</button>
+      </div>
       <div class="search-filters">
         <div class="filter-chip" data-label="person">Person</div>
         <div class="filter-chip" data-label="car">Car</div>
@@ -173,6 +187,10 @@
           <div class="detail-row"><span class="key">Motion Score</span><span class="val" id="det-motion">—</span></div>
           <div class="detail-row"><span class="key">Match Score</span><span class="val" id="det-score">—</span></div>
           <button class="btn" id="describe-btn" style="margin-top:12px;"><span class="icon">✦</span> Describe with AI</button>
+          <div style="display:flex;gap:8px;margin-top:8px;">
+            <button class="btn" id="feedback-up" style="flex:1;"><span class="icon">👍</span> Relevant</button>
+            <button class="btn" id="feedback-down" style="flex:1;"><span class="icon">👎</span> Not relevant</button>
+          </div>
           <div class="detail-desc empty" id="det-description">Click "Describe with AI" to generate a description</div>
         </div>
       </div>
@@ -406,6 +424,24 @@
       let activeFilters = new Set();
       let currentResultId = null;
 
+      function boundTime(dateId, timeId) {
+        const d = document.getElementById(dateId).value;
+        const t = document.getElementById(timeId).value;
+        return d ? (d + 'T' + (t || '00:00') + ':00') : '';
+      }
+      function syncTimeFilterUi() {
+        const active = (boundTime('from-date', 'from-time') || boundTime('to-date', 'to-time'));
+        document.querySelectorAll('#from-date, #from-time, #to-date, #to-time').forEach(el =>
+          el.classList.toggle('time-active', !!active));
+      }
+      ['from-date', 'from-time', 'to-date', 'to-time'].forEach(id =>
+        document.getElementById(id).addEventListener('change', syncTimeFilterUi));
+      document.getElementById('time-clear-btn').addEventListener('click', () => {
+        ['from-date', 'from-time', 'to-date', 'to-time'].forEach(id =>
+          document.getElementById(id).value = '');
+        syncTimeFilterUi();
+      });
+
       filterChips.forEach(chip => {
         chip.addEventListener('click', () => {
           const label = chip.dataset.label;
@@ -422,11 +458,17 @@
         detailPanel.classList.add('hidden');
 
         const labels = activeFilters.size > 0 ? '&labels=' + Array.from(activeFilters).join(',') : '';
+        const fromTS = boundTime('from-date', 'from-time');
+        const toTS = boundTime('to-date', 'to-time');
+        let timeParam = '';
+        if (fromTS) timeParam += '&start_time=' + encodeURIComponent(fromTS);
+        if (toTS) timeParam += '&end_time=' + encodeURIComponent(toTS);
         try {
-          const r = await fetch('/api/search?q=' + encodeURIComponent(q) + labels + '&top_k=20&clips=false');
+          const r = await fetch('/api/search?q=' + encodeURIComponent(q) + labels + timeParam + '&top_k=20&clips=false');
           if (!r.ok) throw new Error(r.status);
           const data = await r.json();
-          searchStatus.textContent = data.count + ' result' + (data.count !== 1 ? 's' : '') + ' for "' + q + '"';
+          const rangeLbl = (fromTS || toTS) ? '  ·  ' + (fromTS || '…') + ' → ' + (toTS || '…') : '';
+          searchStatus.textContent = data.count + ' result' + (data.count !== 1 ? 's' : '') + ' for "' + q + '"' + rangeLbl;
           if (data.count === 0) {
             resultsGrid.innerHTML = '<div class="result-empty">No matching frames found. Try different keywords or remove filters.</div>';
             return;
@@ -450,7 +492,7 @@
             card.innerHTML =
               '<img class="result-thumb" src="/api/frame/' + res.id + '" alt="Frame ' + (i+1) + '" loading="lazy" onerror="this.style.display=\'none\'">' +
               '<div class="result-info">' +
-                '<div class="result-time">' + res.timestamp_str + '</div>' +
+                '<div class="result-time">' + (res.wall_time_str || res.timestamp_str) + '</div>' +
                 '<div class="result-labels">' + countsHtml + colorsHtml + '</div>' +
                 (tagsHtml ? '<div class="result-labels">' + tagsHtml + '</div>' : '') +
                 '<div class="result-score">score: ' + res.score.toFixed(3) + (brkdHtml ? '  ·  ' + brkdHtml : '') + '</div>' +
@@ -471,7 +513,7 @@
         document.querySelectorAll('.result-card').forEach(c => c.classList.remove('selected'));
         event.currentTarget?.classList.add('selected');
 
-        detTimestamp.textContent = res.timestamp_str + ' (' + res.timestamp.toFixed(1) + 's)';
+        detTimestamp.textContent = (res.wall_time_str ? res.wall_time_str + '  ·  clip ' : '') + res.timestamp_str + ' (' + res.timestamp.toFixed(1) + 's)';
         detSource.textContent = res.source_clip.split('/').pop();
         detLabels.textContent = res.labels.length > 0 ? res.labels.join(', ') : 'none detected';
         detCounts.textContent = (res.counts && Object.keys(res.counts).length > 0)
@@ -492,8 +534,13 @@
         detQuality.textContent = quality.toFixed(3);
         detMotion.textContent = res.motion_score.toFixed(3);
         detScore.textContent = res.score.toFixed(4);
-        detDesc.textContent = 'Click "Describe with AI" to generate a description';
-        detDesc.classList.add('empty');
+        if (res.description) {
+          detDesc.textContent = res.description;
+          detDesc.classList.remove('empty');
+        } else {
+          detDesc.textContent = 'Click "Describe with AI" to generate a description';
+          detDesc.classList.add('empty');
+        }
 
         // Load clip
         detailVideo.src = '/api/clip/' + res.id + '?duration=5';
@@ -514,6 +561,22 @@
           detDesc.textContent = 'Description failed: ' + e.message;
         }
       });
+
+      async function sendFeedback(vote) {
+        if (!currentResultId) return;
+        try {
+          await fetch('/api/feedback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entry_id: currentResultId, vote })
+          });
+          searchStatus.textContent = vote === 'up' ? 'Marked relevant.' : 'Marked not relevant — similar results will rank lower.';
+        } catch (e) {
+          searchStatus.textContent = 'Feedback failed: ' + e.message;
+        }
+      }
+      document.querySelector('#feedback-up').addEventListener('click', () => sendFeedback('up'));
+      document.querySelector('#feedback-down').addEventListener('click', () => sendFeedback('down'));
 
       searchBtn.addEventListener('click', doSearch);
       searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });

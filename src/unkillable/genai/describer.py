@@ -1,11 +1,17 @@
 import base64
 from pathlib import Path
+from typing import Optional
 
 import requests
 
+from unkillable.config import load_config, section
 from unkillable.utils.logging_config import get_logger
 
 log = get_logger(__name__)
+
+DEFAULT_PROVIDER = "ollama"
+DEFAULT_BASE_URL = "http://localhost:11434"
+DEFAULT_MODEL = "gemma4:31b-cloud"
 
 
 class DescriberError(RuntimeError):
@@ -13,13 +19,25 @@ class DescriberError(RuntimeError):
 
 
 class Describer:
-    def __init__(self, provider: str = "ollama", base_url: str = "http://localhost:11434", model: str = "gemma4:31b-cloud", timeout: int = 60) -> None:
-        self.provider = provider
-        self.base_url = base_url.rstrip("/")
-        self.model = model
-        self.timeout = timeout
+    def __init__(
+        self,
+        provider: Optional[str] = None,
+        base_url: Optional[str] = None,
+        model: Optional[str] = None,
+        timeout: Optional[int] = None,
+        config_path: Optional[str] = None,
+    ) -> None:
+        cfg = section(load_config(config_path), "genai")
+        self.provider = provider or str(cfg.get("provider") or DEFAULT_PROVIDER)
+        self.base_url = str(base_url or cfg.get("base_url") or DEFAULT_BASE_URL).rstrip("/")
+        self.model = str(model or cfg.get("model") or DEFAULT_MODEL)
+        self.timeout = timeout if timeout is not None else int(cfg.get("timeout") or 60)
 
-    def describe(self, image_path: Path | str, prompt: str = "Describe what you see in this security camera image in one sentence.") -> str:
+    def describe(
+        self,
+        image_path: Path | str,
+        prompt: str = "Look carefully at this security camera image. Note anything abnormal, suspicious, unusual, or otherwise notable — objects, behavior, or details worth flagging. If nothing stands out, say so briefly.",
+    ) -> str:
         p = Path(image_path)
         if not p.exists():
             raise DescriberError(f"Image not found: {p}")

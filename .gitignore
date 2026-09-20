@@ -8,4 +8,5 @@ storage/
 ollama_data/
 .DS_Store
 yolov8n.pt
+.env
 graphify-out/

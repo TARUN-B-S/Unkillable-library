@@ -52,6 +52,29 @@ services:
     depends_on:
       - mediamtx
 
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: unkillable-api:latest
+    container_name: unkillable-api
+    restart: unless-stopped
+    ports:
+      - "5001:5001"
+    environment:
+      # Inside the container, Ollama runs on the host, not localhost.
+      OLLAMA_URL: http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Same absolute path as on the host: the index stores absolute paths
+      # (/data/.../storage/...), so identical mapping keeps them valid.
+      - "${HOST_PROJECT_DIR}:/data/unkillable"
+      # Reuse the host's HF cache so the CLIP model isn't re-downloaded.
+      - "${HOST_HF_CACHE}:/hf-cache"
+    depends_on:
+      - frigate
+
   monitor:
     image: nginx:alpine
     restart: unless-stopped

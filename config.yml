@@ -1,0 +1,12 @@
+# Unkillable Library configuration.
+# The describer (AI-generated thumbnail descriptions) reads its settings from
+# here.  See DOCUMENTATION.md → "Part 4: AI-Generated Descriptions".
+#
+# The default `model` is Ollama's hosted cloud vision model, which requires an
+# Ollama account/credits.  To use a local model instead, pull it first
+# (`ollama pull <model>`) and change `model` accordingly.
+
+genai:
+  provider: ollama
+  base_url: http://localhost:11434
+  model: gemma4:31b-cloud   # Cloud vision-language model (Ollama-hosted)

@@ -267,6 +267,13 @@ No results (DB empty or no match)
 > `pip install sentence-transformers` (heavy, downloads Torch + `clip-ViT-B-32`); the code
 > picks it up automatically if installed.
 
+> **Note:** Frames indexed via `IndexEngine` carry dual vectors — an image
+> embedding and a text embedding of their tags (plus any persisted AI
+> description). Queries fuse both similarities (taking the stronger), so a
+> frame can match via what was *detected* as well as how the image *looks*
+> — even in hash-fallback mode, where the text vector of tags replaces the
+> useless path-hash.
+
 ### 5.5 AI description — **Demonstrative / Optional**
 
 First confirm whether Ollama is reachable and which models exist:
@@ -289,11 +296,13 @@ Three possible outcomes, all truthful:
 | Ollama **up**, model **not pulled** | Red failure: `Describe failed: Ollama error: ... model ... not found` |
 | Ollama **up**, model pulled | An actual natural-language sentence about the image |
 
-The configured model (`qwen3-vl:8b-instruct`, per `config.yml`) is **not pulled by default**
-and is a multi-GB download that runs slowly on CPU. To enable it for real:
+The configured model (`gemma4:31b-cloud`, per `config.yml`) is Ollama's
+hosted **cloud** vision-language model and requires an Ollama account with
+credits. To use a local model instead:
 
 ```bash
-docker exec ollama ollama pull qwen3-vl:8b-instruct   # several GB
+ollama pull qwen3-vl:8b-instruct   # local, multi-GB, runs slowly on CPU
+# then set `genai.model: qwen3-vl:8b-instruct` in config.yml
 python -m unkillable.cli describe storage/thumbnails/thumb.jpg
 ```
 
@@ -395,7 +404,7 @@ That's the expected symptom — install `libzbar0` (prerequisites) and retry.
 | `generate_test_stream.sh` says "ffmpeg not found" | No host ffmpeg | Install ffmpeg; script cannot run in Docker |
 | Frigate LIVE shows no camera / black view | RTSP publisher not publishing | Confirm terminal 2 is running `generate_test_stream.sh`; check `curl http://localhost:8888/v3/paths/list` |
 | No Frigate recordings | `mode: motion` + testsrc may not trip the motion threshold (threshold 30) | Crank `motion.threshold` down (to e.g. 15) in `config/config.yml`, `docker compose restart frigate`; or use a real camera |
-| `describe` fails with "Ollama error: ... not found" | Model not pulled | `docker exec ollama ollama pull qwen3-vl:8b-instruct` |
+| `describe` fails with "Ollama error: ... not found" | Model not pulled / no credits | `ollama pull <model>` or check the Ollama cloud account; set `genai.model` in `config.yml` |
 | `describe` returns the canned fallback sentence | Ollama unreachable | `docker compose ps` — is `ollama` running? |
 | `detect` always says `Detections: 0` | `ultralytics` not installed | `pip install ultralytics` (optional) |
 | `search` scores are ~0.0 for related queries | Hash embedding fallback is not semantic | Install `sentence-transformers`, or phrase queries exactly as indexed |

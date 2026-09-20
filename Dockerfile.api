@@ -1,0 +1,34 @@
+# Search API server for the Unkillable Library dashboard.
+# CPU-only image: torch CPU wheels keep it ~10x smaller than the CUDA default.
+FROM python:3.12-slim
+
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_ROOT_USER_ACTION=ignore \
+    HF_HOME=/hf-cache \
+    PYTHONUNBUFFERED=1
+
+# ffmpeg is needed for clip generation (/api/clip); libzbar for the qr extra.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg libzbar0 \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --index-url https://download.pytorch.org/whl/cpu \
+      torch torchvision
+
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install -r /tmp/requirements.txt && rm /tmp/requirements.txt
+
+# Install the project package (hatchling builds src/unkillable).
+COPY pyproject.toml README.md /tmp/build/
+COPY src /tmp/build/src
+RUN pip install --no-deps /tmp/build && rm -rf /tmp/build
+
+# Non-root user matching the typical host UID so mounted storage/ stays writable.
+RUN useradd --create-home --uid 1000 unkillable
+USER unkillable
+
+WORKDIR /data/unkillable
+EXPOSE 5001
+
+# init (tini) so the Flask process receives signals on docker stop/restart.
+CMD ["python", "-m", "unkillable.cli", "serve", "--host", "0.0.0.0", "--port", "5001"]

@@ -143,13 +143,14 @@ def index(
     camera: str = "default",
     storage_root: str = "storage",
     motion_threshold: float = 0.02,
+    wall_time: float | None = typer.Option(None, help="Wall-clock epoch (sec) of the clip's first frame; default: filename epoch, else file mtime"),
 ) -> None:
     """Index a video clip: extract keyframes, detect objects, embed for search."""
     from unkillable.index.engine import IndexEngine
 
     ie = IndexEngine(storage_root=Path(storage_root), motion_threshold=motion_threshold)
     try:
-        entries = ie.index_clip(Path(clip), camera=camera)
+        entries = ie.index_clip(Path(clip), camera=camera, wall_time=wall_time)
         console.print(f"[green]Indexed {len(entries)} frames from {clip}[/green]")
         for e in entries[:10]:
             counts_str = ", ".join(f"{k}={v}" for k, v in e.counts.items()) or "none"
@@ -173,17 +174,28 @@ def query(
     storage_root: str = "storage",
     clip_duration: float = 5.0,
     no_clips: bool = False,
+    start_time: str = typer.Option("", help="Epoch or ISO datetime (e.g. 2026-09-12 21:00:00)"),
+    end_time: str = typer.Option("", help="Epoch or ISO datetime filter end"),
+    sort: str = typer.Option("relevance", help="relevance | newest | oldest"),
 ) -> None:
     """Search indexed video frames by natural language query."""
     from unkillable.index.engine import IndexEngine
-    from unkillable.query.engine import QueryEngine
+    from unkillable.query.engine import QueryEngine, parse_time
 
     ie = IndexEngine(storage_root=Path(storage_root))
     qe = QueryEngine(index_engine=ie, storage_root=Path(storage_root), clip_duration=clip_duration)
     label_list = [l.strip() for l in labels.split(",") if l.strip()] or None
 
     try:
-        results = qe.query(text, top_k=top_k, labels=label_list, generate_clips=not no_clips)
+        results = qe.query(
+            text,
+            top_k=top_k,
+            labels=label_list,
+            generate_clips=not no_clips,
+            start_time=parse_time(start_time or None),
+            end_time=parse_time(end_time or None),
+            sort=sort,
+        )
         if not results:
             console.print("[yellow]No results found[/yellow]")
             return
@@ -191,12 +203,47 @@ def query(
         for r in results:
             labels_str = ", ".join(r.entry.labels) if r.entry.labels else "none"
             clip_info = f" clip={r.clip_path}" if r.clip_path else ""
+            when = r.entry.wall_time_str or r.entry.timestamp_str
             console.print(
-                f"  [cyan]{r.entry.id}[/cyan] t={r.entry.timestamp_str} "
+                f"  [cyan]{r.entry.id}[/cyan] t={when} "
                 f"score={r.score:.3f} labels=[{labels_str}]{clip_info}"
             )
     except Exception as exc:
         console.print(f"[red]Query failed: {exc}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("time")
+def time_search(
+    t: str = typer.Argument(..., help="Target time: epoch seconds or ISO (e.g. '2026-09-12 21:48:13')"),
+    top_k: int = 5,
+    labels: str = "",
+    storage_root: str = "storage",
+    no_clips: bool = False,
+) -> None:
+    """Find indexed frames with wall-clock times closest to a target time."""
+    from unkillable.index.engine import IndexEngine
+    from unkillable.query.engine import QueryEngine
+
+    ie = IndexEngine(storage_root=Path(storage_root))
+    qe = QueryEngine(index_engine=ie, storage_root=Path(storage_root))
+    label_list = [l.strip() for l in labels.split(",") if l.strip()] or None
+
+    try:
+        results = qe.query_nearest_time(t, top_k=top_k, labels=label_list, generate_clips=not no_clips)
+        if not results:
+            console.print("[yellow]No results (no entries with wall-clock times?)[/yellow]")
+            return
+        console.print(f"[green]{len(results)} nearest results for t={t}[/green]")
+        for r in results:
+            labels_str = ", ".join(r.entry.labels) if r.entry.labels else "none"
+            clip_info = f" clip={r.clip_path}" if r.clip_path else ""
+            console.print(
+                f"  [cyan]{r.entry.id}[/cyan] at={r.entry.wall_time_str} "
+                f"[yellow]Δt={r.score:.1f}s[/yellow] labels=[{labels_str}]{clip_info}"
+            )
+    except Exception as exc:
+        console.print(f"[red]Time search failed: {exc}[/red]")
         raise typer.Exit(1)
 
 

@@ -1,9 +1,11 @@
+import os
+from datetime import datetime
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_file, send_from_directory
 
 from unkillable.index.engine import IndexEngine
-from unkillable.query.engine import QueryEngine
+from unkillable.query.engine import QueryEngine, parse_time
 from unkillable.utils.logging_config import get_logger
 
 log = get_logger(__name__)
@@ -52,6 +54,7 @@ def dashboard():
 def api_search():
     """
     GET /api/search?q=red+car&labels=car,person&top_k=10&clips=true
+        &start_time=2026-09-12T21:00:00&end_time=2026-09-12T22:00:00&sort=newest
     """
     query_text = request.args.get("q", "").strip()
     if not query_text:
@@ -61,13 +64,31 @@ def api_search():
     labels = [l.strip() for l in labels_raw.split(",") if l.strip()] or None
     top_k = int(request.args.get("top_k", 10))
     generate_clips = request.args.get("clips", "true").lower() == "true"
+    start_time = parse_time(request.args.get("start_time"))
+    end_time = parse_time(request.args.get("end_time"))
+    sort = request.args.get("sort", "relevance")
+    if sort not in ("relevance", "newest", "oldest"):
+        sort = "relevance"
 
     qe = _get_query_engine()
-    results = qe.query(query_text, top_k=top_k, labels=labels, generate_clips=generate_clips)
+    results = qe.query(
+        query_text,
+        top_k=top_k,
+        labels=labels,
+        generate_clips=generate_clips,
+        start_time=start_time,
+        end_time=end_time,
+        sort=sort,
+    )
 
     return jsonify({
         "query": query_text,
         "count": len(results),
+        "filters": {
+            "start_time": start_time,
+            "end_time": end_time,
+            "sort": sort,
+        },
         "results": [r.to_dict() for r in results],
     })
 
@@ -89,6 +110,45 @@ def api_search_labels():
     return jsonify({
         "labels": labels,
         "count": len(results),
+        "results": [r.to_dict() for r in results],
+    })
+
+
+@app.route("/api/search/time")
+def api_search_time():
+    """
+    GET /api/search/time?t=2026-09-12T21:48:13&top_k=5&labels=person&clips=false
+
+    Returns the indexed frames whose wall-clock time is closest to ``t``
+    (epoch seconds or ISO datetime).  Each result's ``score`` is the absolute
+    time distance to ``t`` in seconds — smaller is closer.
+    """
+    target = parse_time(request.args.get("t"))
+    if target is None:
+        return jsonify({"error": "Missing or invalid time parameter 't' (epoch or ISO)"}), 400
+
+    labels_raw = request.args.get("labels", "")
+    labels = [l.strip() for l in labels_raw.split(",") if l.strip()] or None
+    top_k_raw = request.args.get("top_k", "10")
+    top_k = int(top_k_raw) if top_k_raw.lower() != "all" else None
+    generate_clips = request.args.get("clips", "false").lower() == "true"
+
+    qe = _get_query_engine()
+    results = qe.query_nearest_time(
+        target,
+        top_k=top_k,
+        labels=labels,
+        generate_clips=generate_clips,
+    )
+
+    return jsonify({
+        "target_time": target,
+        "target_time_str": datetime.fromtimestamp(target).strftime("%Y-%m-%d %H:%M:%S"),
+        "count": len(results),
+        "filters": {
+            "labels": labels,
+            "top_k": top_k,
+        },
         "results": [r.to_dict() for r in results],
     })
 
@@ -138,17 +198,64 @@ def api_frame(entry_id: str):
 
 @app.route("/api/describe/<entry_id>", methods=["POST"])
 def api_describe(entry_id: str):
-    """POST /api/describe/<entry_id> — GenAI description on-demand."""
+    """POST /api/describe/<entry_id> — GenAI description on-demand, persisted + searchable."""
     ie = _get_index_engine()
     entry = ie.get_entry(entry_id)
     if not entry:
         return jsonify({"error": "Entry not found"}), 404
 
-    ollama_url = request.json.get("ollama_url", "http://localhost:11434") if request.is_json else "http://localhost:11434"
+    ollama_url = "http://localhost:11434"
+    if request.is_json and isinstance(request.json, dict):
+        ollama_url = request.json.get("ollama_url", ollama_url)
+    # Inside a container, Ollama is reachable via host.docker.internal, so an
+    # env override lets deployments redirect all describe calls at once.
+    ollama_url = os.environ.get("OLLAMA_URL", ollama_url)
     qe = _get_query_engine()
     description = qe.describe_entry(entry, ollama_url=ollama_url)
 
+    # Persist the description into the entry (in place, via the JSONL file)
+    # and make it searchable by re-embedding the text vector — but never
+    # persist failure messages; they'd pollute the searchable text.
+    if not description.startswith("Description unavailable"):
+        try:
+            ie.update_entry_description(entry_id, description)
+        except Exception as exc:
+            log.warning("Failed to persist description for %s: %s", entry_id, exc)
+
     return jsonify({"id": entry_id, "description": description})
+
+
+@app.route("/api/feedback", methods=["POST"])
+def api_feedback():
+    """
+    POST /api/feedback {"entry_id": "...", "vote": "up"|"down"}
+
+    Records relevance feedback.  'down' votes demote the entry's text vector
+    (scaled toward zero) so similar text matches rank lower over time.
+    """
+    data = request.get_json(silent=True) or {}
+    entry_id = data.get("entry_id")
+    vote = data.get("vote")
+    if not entry_id or vote not in ("up", "down"):
+        return jsonify({"error": "Need 'entry_id' and vote 'up'|'down'"}), 400
+
+    ie = _get_index_engine()
+    entry = ie.get_entry(entry_id)
+    if not entry:
+        return jsonify({"error": "Entry not found"}), 404
+
+    if vote == "down":
+        # Record the vote; the query engine down-weights this entry's text
+        # channel (tags/description matches) per down-vote.  Scaling the
+        # vector itself would be a no-op — cosine is scale-invariant.
+        entry.metadata["feedback_downvotes"] = entry.metadata.get("feedback_downvotes", 0) + 1
+        ie.upsert_entry(entry)
+        log.info("Feedback: down-vote recorded for %s (total %d)",
+                 entry_id, entry.metadata["feedback_downvotes"])
+    else:
+        log.info("Feedback: up-vote recorded for %s", entry_id)
+
+    return jsonify({"id": entry_id, "vote": vote, "recorded": True})
 
 
 # ─── Entries API ─────────────────────────────────────────────────────
@@ -176,6 +283,9 @@ def api_entries():
                 "id": e.id,
                 "timestamp": e.timestamp,
                 "timestamp_str": e.timestamp_str,
+                "wall_time": e.wall_time,
+                "wall_time_str": e.wall_time_str,
+                "camera": e.camera,
                 "source_clip": e.source_clip,
                 "thumbnail_path": e.thumbnail_path,
                 "labels": e.labels,
@@ -196,7 +306,7 @@ def api_entries():
 
 @app.route("/api/stats")
 def api_stats():
-    """GET /api/stats — index statistics."""
+    """GET /api/stats — index statistics (incl. wall-clock time bounds & cameras)."""
     ie = _get_index_engine()
     entries = ie.load_entries()
 
@@ -206,7 +316,14 @@ def api_stats():
     conf_sum = 0.0
     conf_frames = 0
     total_objects = 0
+    time_min = None
+    time_max = None
+    cameras: set[str] = set()
     for e in entries:
+        cameras.add(e.camera or "default")
+        if e.wall_time is not None:
+            time_min = e.wall_time if time_min is None else min(time_min, e.wall_time)
+            time_max = e.wall_time if time_max is None else max(time_max, e.wall_time)
         for o in e.objects:
             color = o.get("color_name")
             if color:
@@ -235,6 +352,9 @@ def api_stats():
         "color_counts": all_colors,
         "tag_counts": all_tags,
         "clip_counts": IndexEngine.clip_counts(entries),
+        "cameras": sorted(cameras),
+        "time_min": time_min,
+        "time_max": time_max,
         "index_file": str(ie.entries_file),
     })
 
