@@ -17,7 +17,6 @@ class Storage:
         self.root = Path(root)
         self.clips = self.root / "clips"
         self.thumbnails = self.root / "thumbnails"
-        self.embeddings = self.root / "embeddings"
         self.index_dir = self.root / "index"
         self.index_thumbs = self.index_dir / "thumbnails"
         self.query_cache = self.root / "query_cache"
@@ -25,7 +24,7 @@ class Storage:
 
     def ensure_dirs(self) -> None:
         try:
-            for p in [self.clips, self.thumbnails, self.embeddings, self.index_dir, self.index_thumbs, self.query_cache]:
+            for p in [self.clips, self.thumbnails, self.index_dir, self.index_thumbs, self.query_cache]:
                 p.mkdir(parents=True, exist_ok=True)
             log.info("Storage dirs ready at %s", self.root)
         except OSError as exc:

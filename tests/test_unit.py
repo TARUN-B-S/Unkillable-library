@@ -22,7 +22,7 @@ class TestStorage:
         s.ensure_dirs()
         assert (tmp_path / "clips").is_dir()
         assert (tmp_path / "thumbnails").is_dir()
-        assert (tmp_path / "embeddings").is_dir()
+        assert (tmp_path / "index").is_dir()
 
     def test_save_and_load_events(self, tmp_path):
         from unkillable.utils.storage import Storage
@@ -486,7 +486,6 @@ class TestCLI:
         storage.mkdir()
         (storage / "clips").mkdir()
         (storage / "thumbnails").mkdir()
-        (storage / "embeddings").mkdir()
         result = runner.invoke(app, ["storage-info", "--root", str(storage)])
         assert result.exit_code == 0
 
@@ -2134,6 +2133,34 @@ class TestSearchImprovements:
         results = ss.search("red car", top_k=2)
         assert results[0].id == "tagged"
         assert results[0].score > results[1].score
+
+    def test_search_reads_entries_jsonl_schema(self, tmp_path):
+        """SemanticSearch.search must read embedding/text_embedding fields from the index entries file."""
+        from unkillable.index.engine import IndexEngine
+        from unkillable.index.models import IndexEntry
+        from unkillable.semantic.search import SemanticSearch
+
+        ie = IndexEngine(storage_root=tmp_path)
+        ss = SemanticSearch(db_path=ie.entries_file)
+        ie.ensure_dirs()
+        vec = ss.embed_text("generic frame")
+        entries = [
+            IndexEntry(
+                id="tagged", timestamp=1.0, source_clip="c", thumbnail_path="t1",
+                embedding=vec, text_embedding=ss.embed_text("red car truck"), labels=["car"],
+            ),
+            IndexEntry(
+                id="plain", timestamp=2.0, source_clip="c", thumbnail_path="t2",
+                embedding=vec, labels=["car"],
+            ),
+        ]
+        ie._save_entries(entries)
+
+        results = ss.search("red car", top_k=2)
+        assert len(results) == 2
+        assert results[0].id == "tagged"
+        assert results[0].score > 0
+        assert results[0].score >= results[1].score
 
     def test_description_persists_and_is_searchable(self, tmp_path):
         """update_entry_description rewrites the entry and refreshes its text vector."""

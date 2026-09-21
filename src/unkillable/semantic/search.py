@@ -104,7 +104,7 @@ class SemanticSearch:
     def __init__(self, model: str | None = None, db_path: Path | None = None) -> None:
         self.model = os.environ.get("UNKILLABLE_EMBEDDING_MODEL") or model or _DEFAULT_EMBED_MODEL
         self.mode = os.environ.get("UNKILLABLE_EMBEDDING_MODE", "auto")
-        self.db_path = Path(db_path) if db_path else Path("storage/embeddings/db.jsonl")
+        self.db_path = Path(db_path) if db_path else Path("storage/index/entries.jsonl")
         self._encoder = None
         self._record_cache: list[dict] | None = None
         self._record_cache_key: tuple[int, int] | None = None
@@ -266,7 +266,7 @@ class SemanticSearch:
         rows: list[list[float]] = []
         idxs: list[int] = []
         for i, rec in enumerate(records):
-            vec = rec.get("vector")
+            vec = rec.get("vector") or rec.get("embedding")
             if vec and len(vec) == dim:
                 rows.append(vec)
                 idxs.append(i)
@@ -304,7 +304,7 @@ class SemanticSearch:
             else:
                 # Mixed vector dims in the db: score mismatches individually.
                 for i, rec in enumerate(records):
-                    image_scores[i] = cosine(qvec, rec.get("vector") or [])
+                    image_scores[i] = cosine(qvec, rec.get("vector") or rec.get("embedding") or [])
             # Text-vector scores (frames indexed with tags via index_entry)
             text_scores = self._text_scores(records, qvec)
             # Fuse: max of image and text similarity — a strong match on
@@ -322,7 +322,7 @@ class SemanticSearch:
         scored: list[float] = [0.0] * len(records)
         by_dim: dict[int, list[tuple[int, list[float]]]] = {}
         for i, rec in enumerate(records):
-            tvec = rec.get("metadata", {}).get("text_vector")
+            tvec = rec.get("metadata", {}).get("text_vector") or rec.get("text_embedding")
             if tvec:
                 by_dim.setdefault(len(tvec), []).append((i, tvec))
         for dim, items in by_dim.items():

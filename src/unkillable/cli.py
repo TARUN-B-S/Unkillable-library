@@ -69,7 +69,7 @@ def detect(
 
 
 @app.command()
-def search(query: str, top_k: int = 5, db: str = "storage/embeddings/db.jsonl") -> None:
+def search(query: str, top_k: int = 5, db: str = "storage/index/entries.jsonl") -> None:
     ss = SemanticSearch(db_path=Path(db))
     try:
         results = ss.search(query, top_k=top_k)

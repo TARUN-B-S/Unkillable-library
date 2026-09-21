@@ -69,6 +69,10 @@ services:
     volumes:
       # Same absolute path as on the host: the index stores absolute paths
       # (/data/.../storage/...), so identical mapping keeps them valid.
+      - "${HOST_PROJECT_DIR}:${HOST_PROJECT_DIR}"
+      # Keep the image's working dir (/data/unkillable) as the original
+      # mount so relative "storage" paths and the YOLO weights at the repo
+      # root still resolve inside the container.
       - "${HOST_PROJECT_DIR}:/data/unkillable"
       # Reuse the host's HF cache so the CLIP model isn't re-downloaded.
       - "${HOST_HF_CACHE}:/hf-cache"

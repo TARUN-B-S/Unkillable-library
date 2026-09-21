@@ -230,7 +230,7 @@ There is no CLI command to index, so populate the embedding DB with the library 
 ```bash
 python - <<'PY'
 from unkillable.semantic import SemanticSearch
-ss = SemanticSearch(db_path="storage/embeddings/db.jsonl")
+ss = SemanticSearch(db_path="storage/index/entries.jsonl")
 for i, doc in enumerate(["red car in driveway", "dog in backyard", "person at the front door"]):
     ss.index(f"evt{i}", ss.embed_text(doc), {"camera": "front", "label": f"doc{i}", "ts": "2026-08-27T09:0%d:00Z" % i})
 print("indexed 3 documents")
@@ -434,7 +434,7 @@ demo run:
 ```bash
 docker compose down -v
 rm -f storage/backup.pdf storage/restored.tar.gz storage/testsrc.mp4 storage/demo_notes.txt \
-      storage/qr_pages/* storage/thumbnails/* storage/embeddings/db.jsonl storage/events.jsonl
+      storage/qr_pages/* storage/thumbnails/* storage/index/entries.jsonl storage/events.jsonl
 find storage -type d -empty -delete
 ```
 

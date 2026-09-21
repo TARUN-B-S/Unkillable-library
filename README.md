@@ -22,7 +22,7 @@ unkillable thumbnail <input> --output storage/thumbnails/thumb.jpg
 unkillable detect <image.jpg> --labels person,car,dog
 unkillable search "red car" --top-k 5
 unkillable describe <image.jpg>
-unkillable backup storage/thumbnails,storage/embeddings --output storage/backup.pdf
+unkillable backup storage/index,storage/thumbnails --output storage/backup.pdf
 unkillable restore "storage/qr_*.png"
 ```
 
