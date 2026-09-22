@@ -1,6 +1,6 @@
 # The Unkillable Library
 
-Local-only NVR: motion-only recording, AI object detection, semantic search, paper QR backup.
+Local-only NVR: motion-only recording, AI object detection, semantic search, paper QR backup, daily grayscale frame backup. Low-latency live video via MediaMTX HLS + HLS.js tuned to chase the live edge.
 
 ## Quick Start
 
@@ -12,7 +12,7 @@ docker compose up -d
 ./scripts/generate_test_stream.sh
 ```
 
-Open http://localhost:5000
+Open http://localhost:8080
 
 ## CLI
 
@@ -22,8 +22,10 @@ unkillable thumbnail <input> --output storage/thumbnails/thumb.jpg
 unkillable detect <image.jpg> --labels person,car,dog
 unkillable search "red car" --top-k 5
 unkillable describe <image.jpg>
-unkillable backup storage/index,storage/thumbnails --output storage/backup.pdf
-unkillable restore "storage/qr_*.png"
+unkillable backup storage/thumbnails,storage/embeddings --output storage/backup.pdf
+unkillable restore "storage/qr_*.png" --output storage/restored.tar.gz
+unkillable backup-frames --source storage --dest backups --verify
+unkillable restore-frames backups/2026-09-12 --output storage_restored
 ```
 
 ## Structure
@@ -39,10 +41,11 @@ unkillable-library/
 │   ├── backup/            # QR encode/decode (paper backup)
 │   └── utils/             # FFmpeg wrapper, storage, logging
 ├── config/config.yml      # Frigate config (CPU, motion, 30d retain)
-├── config/mediamtx.yml    # RTSP server for test stream
-├── docker-compose.yml     # Frigate + MediaMTX + Ollama
+├── config/mediamtx.yml    # RTSP + HLS server (low-latency live)
+├── docker-compose.yml     # frigate + mediamtx + stream-bridge
 ├── storage/               # Clips, thumbnails, embeddings
-└── report.md / OPINIONS.md
+├── backups/               # Daily grayscale frame backups
+└── storage-optimize.md report.md OPINIONS.md
 ```
 
 ## Detection model

@@ -297,12 +297,18 @@
       }
 
       // Live HLS
-      const hlsSource = 'https://s52.nysdot.skyvdn.com/rtplive/R10_255/playlist.m3u8';
+      const hlsSource = 'http://localhost:8888/test/index.m3u8';
       function startLive() {
         if (liveEl.canPlayType('application/vnd.apple.mpegurl')) {
           liveEl.src = hlsSource;
         } else if (window.Hls && Hls.isSupported()) {
-          const hls = new Hls();
+          const hls = new Hls({
+            liveSyncDuration: 0,
+            liveSyncDurationCount: 0,
+            maxBufferLength: 1,
+            maxMaxBufferLength: 1,
+            liveDurationInfinity: true,
+          });
           hls.loadSource(hlsSource);
           hls.attachMedia(liveEl);
         } else {

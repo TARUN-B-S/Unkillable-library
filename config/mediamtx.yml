@@ -1,13 +1,11 @@
 logLevel: info
 rtsp: true
 rtmp: false
-hls: false
-webrtc: false
+hls: true
+webrtc: true
 srt: false
 
 paths:
   test:
     source: publisher
     record: false
-  all_others:
-    source: publisher
