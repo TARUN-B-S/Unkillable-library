@@ -15,7 +15,7 @@ class QRBackupError(RuntimeError):
 
 
 class QRBackup:
-    def __init__(self, chunk_size: int = 2953, redundancy: float = 0.3, error_correction: str = "M") -> None:
+    def __init__(self, chunk_size: int = 2300, redundancy: float = 0.3, error_correction: str = "M") -> None:
         self.chunk_size = chunk_size
         self.redundancy = redundancy
         self.error_correction = error_correction
@@ -55,6 +55,12 @@ class QRBackup:
         except OSError as exc:
             raise QRBackupError(f"Failed to read archive: {exc}") from exc
 
+        payloads: list[tuple[int, str]] = []
+        for i, chunk in enumerate(chunks):
+            payloads.append((i + 1, chunk))
+            if i < redundant:
+                payloads.append((i + 1, chunk))
+
         try:
             pdf_output.parent.mkdir(parents=True, exist_ok=True)
             c = canvas.Canvas(str(pdf_output), pagesize=A4)
@@ -70,7 +76,7 @@ class QRBackup:
             c.drawCentredString(w / 2, h - 22 * mm, f"Archive: {archive.name} | Chunks: {total} | Date: {archive.stat().st_mtime}")
 
             idx = 0
-            for chunk_idx, chunk in enumerate(chunks):
+            for chunk_idx, chunk in payloads:
                 col = idx % cols
                 row = (idx // cols) % rows
                 if idx > 0 and idx % (cols * rows) == 0:
@@ -80,7 +86,7 @@ class QRBackup:
                 x = margin_x + col * (qr_size + margin_x)
                 y = h - 35 * mm - (row + 1) * (qr_size + 5 * mm)
 
-                payload = f"{chunk_idx+1}/{total}|{chunk}"
+                payload = f"{chunk_idx}/{total}|{chunk}"
                 qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=4, border=2)
                 qr.add_data(payload)
                 qr.make(fit=True)
@@ -92,14 +98,15 @@ class QRBackup:
 
                 c.drawImage(tmp_path, x, y, width=qr_size, height=qr_size)
                 c.setFont("Helvetica", 6)
-                c.drawCentredString(x + qr_size / 2, y - 4 * mm, f"QR {chunk_idx+1}/{total}")
+                c.drawCentredString(x + qr_size / 2, y - 4 * mm, f"QR {chunk_idx}/{total}")
                 Path(tmp_path).unlink(missing_ok=True)
                 idx += 1
 
+            c.showPage()
             c.setFont("Helvetica", 7)
-            c.drawCentredString(w / 2, 12 * mm, "RESTORE: qr-backup --restore <pdf>  or  zbarimg --raw *.jpg > backup.tar.gz")
+            c.drawCentredString(w / 2, 12 * mm, "RESTORE: unkillable restore 'storage/qr_*.png'")
             c.save()
-            log.info("QR PDF created: %s (%d QR codes, %d pages)", pdf_output, total, c.getPageNumber())
+            log.info("QR PDF created: %s (%d QR codes, %d pages)", pdf_output, len(payloads), c.getPageNumber())
             return pdf_output
         except Exception as exc:
             raise QRBackupError(f"QR PDF generation failed: {exc}") from exc

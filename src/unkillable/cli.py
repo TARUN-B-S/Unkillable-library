@@ -264,5 +264,97 @@ def serve(
     app.run(host=host, port=port, debug=debug)
 
 
+# ── Storyteller Trio ────────────────────────────────────────────────
+
+story_app = typer.Typer(help="Storytelling add-on: nightwatch diary, anomaly copilot, memory palace")
+
+
+@story_app.command()
+def nightly(
+    date: str = typer.Option("", help="YYYY-MM-DD (default: today)"),
+    top_n: int = typer.Option(5, help="How many top events the local LLM enriches (tier 2)"),
+    storage_root: str = "storage",
+    ollama_url: str = "http://localhost:11434",
+) -> None:
+    """Run the full storyteller pipeline for one day (idempotent)."""
+    from unkillable.story.runner import StoryRunner, parse_date
+
+    try:
+        target = parse_date(date)
+        result = StoryRunner(
+            storage_root=storage_root, top_n=top_n, ollama_url=ollama_url
+        ).nightly(target)
+        console.print(f"[green]{result.summary()}[/green]")
+    except Exception as exc:
+        console.print(f"[red]Story nightly failed: {exc}[/red]")
+        raise typer.Exit(1)
+
+
+@story_app.command("diary")
+def story_diary(
+    date: str = typer.Option("", help="YYYY-MM-DD (default: today)"),
+    storage_root: str = "storage",
+) -> None:
+    """Print a day's nightwatch diary."""
+    from unkillable.story.runner import parse_date
+
+    try:
+        target = parse_date(date)
+        path = Path(storage_root) / "story" / "diary" / f"{target.isoformat()}.txt"
+        if not path.exists():
+            console.print("[yellow]No diary for that date yet — run 'unkillable story nightly'[/yellow]")
+            return
+        console.print(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        console.print(f"[red]Story diary failed: {exc}[/red]")
+        raise typer.Exit(1)
+
+
+@story_app.command()
+def search(query: str, top_k: int = 5, storage_root: str = "storage") -> None:
+    """Search the diary text corpus by natural language."""
+    from unkillable.semantic.search import SemanticSearch
+
+    index_path = Path(storage_root) / "story" / "diary_index.jsonl"
+    if not index_path.exists():
+        console.print("[yellow]Diary not indexed yet — run 'unkillable story nightly'[/yellow]")
+        return
+    try:
+        results = SemanticSearch(db_path=index_path).search(query, top_k=top_k)
+        if not results:
+            console.print("[yellow]No diary matches[/yellow]")
+            return
+        console.print(f"[green]{len(results)} diary matches for '{query}'[/green]")
+        for r in results:
+            console.print(f"  [cyan]{r.id}[/cyan] score={r.score:.3f} {r.metadata.get('text', '')}")
+    except Exception as exc:
+        console.print(f"[red]Story search failed: {exc}[/red]")
+        raise typer.Exit(1)
+
+
+@story_app.command()
+def identities(storage_root: str = "storage") -> None:
+    """List persistent identities from the Memory Palace."""
+    from unkillable.story.identities import IdentityStore, display_name
+
+    try:
+        store = IdentityStore(Path(storage_root) / "story" / "identities.json")
+        if not store.identities:
+            console.print("[yellow]No identities yet — run 'unkillable story nightly'[/yellow]")
+            return
+        console.print(f"[green]{len(store.identities)} persistent identities[/green]")
+        for ident in sorted(store.identities, key=lambda i: i.last_seen, reverse=True):
+            console.print(
+                f"  [cyan]{ident.id}[/cyan] {display_name(ident.fingerprint)} "
+                f"seen {ident.counts}x camera={ident.camera}"
+            )
+    except Exception as exc:
+        console.print(f"[red]Story identities failed: {exc}[/red]")
+        raise typer.Exit(1)
+
+
+app.add_typer(story_app, name="story", help="Storyteller trio — diary, anomalies, identities")
+
+
 if __name__ == "__main__":
     app()

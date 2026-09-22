@@ -10,3 +10,4 @@ ollama_data/
 yolov8n.pt
 .env
 graphify-out/
+story.md

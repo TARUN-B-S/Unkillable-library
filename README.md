@@ -24,6 +24,10 @@ unkillable search "red car" --top-k 5
 unkillable describe <image.jpg>
 unkillable backup storage/index,storage/thumbnails --output storage/backup.pdf
 unkillable restore "storage/qr_*.png"
+unkillable story nightly --top-n 5              # storyteller trio: diary + anomalies + identities
+unkillable story diary --date 2026-09-10        # print a day's nightwatch diary
+unkillable story search "red car after 8am"     # search the diary text corpus
+unkillable story identities                     # list persistent identities
 ```
 
 ## Structure
